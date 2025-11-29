@@ -1,7 +1,7 @@
 # 🏠 Scene Manager Ultimate
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)]()
+[![Version](https://img.shields.io/badge/version-1.0.1-blue)]()
 
 **Scene Manager Ultimate** est une solution complète (Intégration + Carte) pour Home Assistant qui réinvente la gestion de l'éclairage.
 

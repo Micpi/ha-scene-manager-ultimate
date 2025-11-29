@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.0.0
+// Version: 1.0.1
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 console.info(
-    `%c SCENE-MANAGER-ULTIMATE %c v1.0.0 `,
+    `%c SCENE-MANAGER-ULTIMATE %c v1.0.1 `,
     'color: white; background: #4CAF50; font-weight: 700;',
     'color: #4CAF50; background: white; font-weight: 700;'
 );

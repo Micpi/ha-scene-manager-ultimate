@@ -2,22 +2,26 @@ import logging
 import json
 import os
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers.entity_component import EntityComponent
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.scene import DOMAIN as SCENE_DOMAIN
-from homeassistant.helpers import entity_registry as er, area_registry as ar
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "scene_manager"
 STORAGE_KEY = "scene_manager_data"
 STORAGE_VERSION = 1
 
+# 1. Configuration via YAML (Laissée vide mais requise)
 async def async_setup(hass: HomeAssistant, config: dict):
-    # 1. Charger les données existantes
+    return True
+
+# 2. Configuration via UI (C'est ici que ça se passe maintenant)
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+    
+    # Charger le stockage
     store = hass.helpers.storage.Store(STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {"meta": {}, "order": {}}
 
-    # 2. Créer un Sensor virtuel pour envoyer les données au Frontend
-    # On utilise l'état pour forcer le refresh (timestamp)
+    # Fonction pour mettre à jour le sensor
     def update_sensor():
         hass.states.async_set(
             "sensor.scene_manager_registry", 
@@ -25,10 +29,11 @@ async def async_setup(hass: HomeAssistant, config: dict):
             {"meta": data["meta"], "order": data["order"]}
         )
 
-    # Initialisation du sensor au démarrage
+    # Init du sensor
     update_sensor()
 
-    # 3. Service: Sauvegarder Scène
+    # --- DÉFINITION DES SERVICES ---
+    
     async def handle_save_scene(call: ServiceCall):
         scene_id = call.data.get("scene_id")
         entities = call.data.get("entities", [])
@@ -38,25 +43,22 @@ async def async_setup(hass: HomeAssistant, config: dict):
         
         full_entity_id = f"scene.{scene_id}"
 
-        # A. Appeler le service natif scene.create
+        # Appel natif
         await hass.services.async_call(
             SCENE_DOMAIN, "create",
             {"scene_id": scene_id, "snapshot_entities": entities},
             blocking=True
         )
 
-        # B. Sauvegarder les métadonnées
+        # Sauvegarde Meta
         data["meta"][full_entity_id] = {"icon": icon, "color": color, "room": room}
         
-        # Gestion de l'ordre (ajout si nouveau)
-        if room not in data["order"]:
-            data["order"][room] = []
-        if full_entity_id not in data["order"][room]:
-            data["order"][room].append(full_entity_id)
+        if room not in data["order"]: data["order"][room] = []
+        if full_entity_id not in data["order"][room]: data["order"][room].append(full_entity_id)
 
         await store.async_save(data)
         
-        # C. Forcer l'icône sur l'entité scène native
+        # Force state update
         state = hass.states.get(full_entity_id)
         if state:
             new_attrs = dict(state.attributes)
@@ -66,42 +68,63 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
         update_sensor()
 
-    # 4. Service: Supprimer Scène
     async def handle_delete_scene(call: ServiceCall):
         entity_id = call.data.get("entity_id")
-        
-        # Supprimer de HA
         hass.states.async_remove(entity_id)
         
-        # Supprimer des métadonnées
-        if entity_id in data["meta"]:
-            del data["meta"][entity_id]
+        if entity_id in data["meta"]: del data["meta"][entity_id]
         
-        # Supprimer de l'ordre
         for room, scenes in data["order"].items():
-            if entity_id in scenes:
-                scenes.remove(entity_id)
+            if entity_id in scenes: scenes.remove(entity_id)
         
         await store.async_save(data)
         update_sensor()
 
-    # 5. Service: Réorganiser (Drag & Drop)
     async def handle_reorder(call: ServiceCall):
         room = call.data.get("room")
         new_order = call.data.get("order", [])
-        
         data["order"][room] = new_order
         await store.async_save(data)
         update_sensor()
+    
+    async def handle_set_state(call: ServiceCall):
+        # Pour le script Python intégré
+        eid = call.data.get("entity_id")
+        st = call.data.get("state")
+        attrs = call.data.get("attributes")
+        icn = call.data.get("icon")
+        clr = call.data.get("color")
+        
+        if eid:
+            ns = hass.states.get(eid)
+            c_st = ns.state if ns else (st or "unknown")
+            c_at = ns.attributes.copy() if ns else {}
+            if st: c_st = st
+            if attrs: c_at.update(attrs)
+            if icn: c_at['icon'] = icn
+            if clr: c_at['theme_color'] = clr
+            hass.states.async_set(eid, c_st, c_at)
 
+    # Enregistrement des services
     hass.services.async_register(DOMAIN, "save_scene", handle_save_scene)
     hass.services.async_register(DOMAIN, "delete_scene", handle_delete_scene)
     hass.services.async_register(DOMAIN, "reorder_scenes", handle_reorder)
+    # On remplace le script python par un service interne !
+    hass.services.async_register("python_script", "set_state", handle_set_state)
+    hass.services.async_register("python_script", "delete_entity", handle_delete_scene)
 
-    # Exposition du fichier JS pour le frontend
+    # Exposition du fichier JS
     hass.http.register_static_path(
         "/scene_manager/card.js",
         hass.config.path("custom_components/scene_manager/www/scene-manager-card.js"),
     )
 
+    return True
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
+    """Supprime l'intégration."""
+    # On retire les services si on désinstalle
+    hass.services.async_remove(DOMAIN, "save_scene")
+    hass.services.async_remove(DOMAIN, "delete_scene")
+    hass.services.async_remove(DOMAIN, "reorder_scenes")
     return True
