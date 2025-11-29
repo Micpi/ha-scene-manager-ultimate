@@ -4,21 +4,23 @@ import os
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.scene import DOMAIN as SCENE_DOMAIN
+# --- IMPORT CORRIGÉ ---
+from homeassistant.helpers.storage import Store 
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "scene_manager"
 STORAGE_KEY = "scene_manager_data"
 STORAGE_VERSION = 1
 
-# 1. Configuration via YAML (Laissée vide mais requise)
 async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
-# 2. Configuration via UI (C'est ici que ça se passe maintenant)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     
-    # Charger le stockage
-    store = hass.helpers.storage.Store(STORAGE_VERSION, STORAGE_KEY)
+    # --- LIGNE CORRIGÉE ---
+    # On utilise la classe Store importée directement
+    store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+    
     data = await store.async_load() or {"meta": {}, "order": {}}
 
     # Fonction pour mettre à jour le sensor
@@ -58,7 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         await store.async_save(data)
         
-        # Force state update
+        # Force state update (pour l'icone immédiate)
         state = hass.states.get(full_entity_id)
         if state:
             new_attrs = dict(state.attributes)
@@ -70,7 +72,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     async def handle_delete_scene(call: ServiceCall):
         entity_id = call.data.get("entity_id")
-        hass.states.async_remove(entity_id)
+        
+        # On essaie de supprimer l'entité de HA
+        try:
+            hass.states.async_remove(entity_id)
+        except:
+            pass # Pas grave si elle n'existe déjà plus
         
         if entity_id in data["meta"]: del data["meta"][entity_id]
         
@@ -88,7 +95,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         update_sensor()
     
     async def handle_set_state(call: ServiceCall):
-        # Pour le script Python intégré
+        # Remplacement du script Python manuel
         eid = call.data.get("entity_id")
         st = call.data.get("state")
         attrs = call.data.get("attributes")
@@ -98,18 +105,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         if eid:
             ns = hass.states.get(eid)
             c_st = ns.state if ns else (st or "unknown")
-            c_at = ns.attributes.copy() if ns else {}
+            c_at = dict(ns.attributes) if ns else {} # Copie propre
+            
             if st: c_st = st
             if attrs: c_at.update(attrs)
             if icn: c_at['icon'] = icn
             if clr: c_at['theme_color'] = clr
+            
             hass.states.async_set(eid, c_st, c_at)
 
     # Enregistrement des services
     hass.services.async_register(DOMAIN, "save_scene", handle_save_scene)
     hass.services.async_register(DOMAIN, "delete_scene", handle_delete_scene)
     hass.services.async_register(DOMAIN, "reorder_scenes", handle_reorder)
-    # On remplace le script python par un service interne !
+    
+    # On enregistre les alias "python_script" pour garder la compatibilité avec le JS
     hass.services.async_register("python_script", "set_state", handle_set_state)
     hass.services.async_register("python_script", "delete_entity", handle_delete_scene)
 
@@ -123,8 +133,4 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Supprime l'intégration."""
-    # On retire les services si on désinstalle
-    hass.services.async_remove(DOMAIN, "save_scene")
-    hass.services.async_remove(DOMAIN, "delete_scene")
-    hass.services.async_remove(DOMAIN, "reorder_scenes")
     return True
