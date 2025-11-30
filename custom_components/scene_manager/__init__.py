@@ -205,7 +205,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.services.async_remove(DOMAIN, "delete_scene")
     hass.services.async_remove(DOMAIN, "reorder_scenes")
 
-    # load storage and cleanup copied files / notifications
+    # remove the registry sensor
+    try:
+        if hass.states.get("sensor.scene_manager_registry"):
+            hass.states.async_remove("sensor.scene_manager_registry")
+    except Exception:
+        pass
+
+    return True
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
+    """Called when the entry is removed (deleted) from Home Assistant."""
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     try:
         data = await store.async_load() or {}
@@ -222,14 +232,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
                     _LOGGER.info("scene_manager: removed copied www file %s", www_file)
                 except Exception as ex:
                     _LOGGER.debug("scene_manager: could not remove www file: %s", ex)
-            # unset the flag and remove storage
-    except Exception:
-        pass
-
-    # remove the registry sensor
-    try:
-        if hass.states.get("sensor.scene_manager_registry"):
-            hass.states.async_remove("sensor.scene_manager_registry")
     except Exception:
         pass
 
@@ -243,8 +245,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     # remove stored data file to ensure a clean reinstall
     try:
         await store.async_remove()
-        _LOGGER.info("scene_manager: removed stored data on unload")
+        _LOGGER.info("scene_manager: removed stored data on remove_entry")
     except Exception:
         pass
-
-    return True
