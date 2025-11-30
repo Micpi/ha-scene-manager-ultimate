@@ -33,7 +33,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.9)")
+    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.10)")
 
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {"meta": {}, "order": {}}

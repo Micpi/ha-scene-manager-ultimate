@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.0.9
+// Version: 1.0.10
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.0.9';
+const VERSION = '1.0.10';
 
 // ... Le reste du code de la classe SceneManagerCard ...
 
@@ -496,9 +496,14 @@ class SceneManagerCard extends HTMLElement {
             if (!this.editingId) { const currentOrder = this._loadOrder(); if (!currentOrder.includes(newEntityId)) { currentOrder.push(newEntityId); this._saveOrder(currentOrder); } }
         }
 
-        this._hass.callService("scene", "create", { scene_id: shortId, snapshot_entities: selectedLights });
-        const updateState = () => { this._hass.callService("python_script", "set_state", { entity_id: newEntityId, icon: iconToSave, color: color }); };
-        setTimeout(updateState, 500); setTimeout(updateState, 2000); setTimeout(updateState, 4000);
+        this._hass.callService("scene_manager", "save_scene", {
+            scene_id: shortId,
+            entities: selectedLights,
+            icon: iconToSave,
+            color: color,
+            room: room
+        });
+
         this.inputName.value = ""; this._toggleMenu(false); this._updateContent();
     }
 
@@ -546,7 +551,7 @@ class SceneManagerCard extends HTMLElement {
             }
             btn.querySelector(".delete-badge").addEventListener("click", (e) => {
                 e.stopPropagation(); if (confirm(`Supprimer "${name}" ?`)) {
-                    this._hass.callService("python_script", "delete_entity", { entity_id: entityId });
+                    this._hass.callService("scene_manager", "delete_scene", { entity_id: entityId });
                     const m = this._loadMeta(); delete m[entityId]; this._saveMeta(m);
                     this.cachedOrder = this.cachedOrder.filter(id => id !== entityId); this._pushToServer();
                     btn.style.opacity = "0"; btn.style.width = "0px"; setTimeout(() => btn.remove(), 300);
