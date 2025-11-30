@@ -33,11 +33,49 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.10)")
+    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.11)")
 
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {"meta": {}, "order": {}}
     _LOGGER.info("scene_manager: loaded storage data. Scenes count: %d", len(data.get("meta", {})))
+
+    # --- RESTAURATION DES SCÈNES ---
+    # On recrée les scènes dans Home Assistant à partir des snapshots sauvegardés
+    restored_count = 0
+    for scene_entity_id, scene_data in data.get("meta", {}).items():
+        try:
+            # scene_entity_id est sous la forme "scene.salon_film"
+            # On extrait l'ID court "salon_film"
+            if "." in scene_entity_id:
+                scene_id = scene_entity_id.split(".", 1)[1]
+            else:
+                scene_id = scene_entity_id
+
+            snapshot = scene_data.get("snapshot", {})
+            
+            # Si on a un snapshot, on recrée la scène
+            if snapshot:
+                await hass.services.async_call(
+                    SCENE_DOMAIN, "create",
+                    {"scene_id": scene_id, "entities": snapshot},
+                    blocking=True
+                )
+                
+                # On restaure aussi les attributs cosmétiques (icône, couleur) sur l'entité créée
+                state = hass.states.get(scene_entity_id)
+                if state:
+                    new_attrs = dict(state.attributes)
+                    if "icon" in scene_data:
+                        new_attrs['icon'] = scene_data["icon"]
+                    if "color" in scene_data:
+                        new_attrs['theme_color'] = scene_data["color"]
+                    hass.states.async_set(scene_entity_id, state.state, new_attrs)
+                
+                restored_count += 1
+        except Exception as e:
+            _LOGGER.warning("scene_manager: Failed to restore scene %s: %s", scene_entity_id, e)
+            
+    _LOGGER.info("scene_manager: Restored %d scenes from storage", restored_count)
 
     def update_sensor():
         hass.states.async_set(
@@ -68,7 +106,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             
             full_entity_id = f"scene.{scene_id}"
 
-            # 1. Créer la scène dans Home Assistant
+            # 1. Capturer l'état actuel des entités pour la persistance (Snapshot)
+            snapshot = {}
+            for entity_id in entities:
+                state_obj = hass.states.get(entity_id)
+                if state_obj:
+                    # On sauvegarde l'état et les attributs pour pouvoir les restaurer via scene.create
+                    entity_data = dict(state_obj.attributes)
+                    entity_data["state"] = state_obj.state
+                    snapshot[entity_id] = entity_data
+
+            # 2. Créer la scène dans Home Assistant (immédiat)
             try:
                 await hass.services.async_call(
                     SCENE_DOMAIN, "create",
@@ -80,20 +128,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 _LOGGER.error("scene_manager: Failed to create HA scene: %s", e)
                 return # Stop if we can't create the scene
 
-            # 2. Mettre à jour les métadonnées
-            data["meta"][full_entity_id] = {"icon": icon, "color": color, "room": room}
+            # 3. Mettre à jour les métadonnées AVEC LE SNAPSHOT
+            data["meta"][full_entity_id] = {
+                "icon": icon, 
+                "color": color, 
+                "room": room,
+                "snapshot": snapshot # On sauvegarde le snapshot !
+            }
             
             if room not in data["order"]: data["order"][room] = []
             if full_entity_id not in data["order"][room]: data["order"][room].append(full_entity_id)
 
-            # 3. Sauvegarder sur le disque
+            # 4. Sauvegarder sur le disque
             try:
                 await store.async_save(data)
                 _LOGGER.info("scene_manager: SUCCESS - Data saved to storage. Total scenes: %d", len(data["meta"]))
             except Exception as e:
                 _LOGGER.error("scene_manager: CRITICAL - Failed to save to storage: %s", e)
             
-            # 4. Mettre à jour l'état pour l'UI immédiate
+            # 5. Mettre à jour l'état pour l'UI immédiate
             state = hass.states.get(full_entity_id)
             if state:
                 new_attrs = dict(state.attributes)

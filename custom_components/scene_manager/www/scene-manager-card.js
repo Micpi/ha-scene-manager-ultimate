@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.0.10
+// Version: 1.0.11
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.0.10';
+const VERSION = '1.0.11';
 
 // ... Le reste du code de la classe SceneManagerCard ...
 
