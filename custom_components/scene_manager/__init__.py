@@ -33,7 +33,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.6)")
+    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.7)")
 
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {"meta": {}, "order": {}}
@@ -72,7 +72,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         try:
             await store.async_save(data)
-            _LOGGER.debug("scene_manager: saved data to storage")
+            _LOGGER.info("scene_manager: saved data to storage. Meta keys: %s", list(data["meta"].keys()))
         except Exception as e:
             _LOGGER.error("scene_manager: failed to save data: %s", e)
         
