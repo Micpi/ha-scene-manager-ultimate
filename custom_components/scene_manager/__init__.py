@@ -33,11 +33,11 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    _LOGGER.debug("scene_manager: async_setup_entry start for entry %s", entry.entry_id if hasattr(entry, 'entry_id') else entry)
+    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.6)")
 
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {"meta": {}, "order": {}}
-    _LOGGER.debug("scene_manager: loaded storage data keys: %s", list(data.keys()))
+    _LOGGER.info("scene_manager: loaded storage data. Scenes count: %d", len(data.get("meta", {})))
 
     def update_sensor():
         hass.states.async_set(
@@ -70,7 +70,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         if room not in data["order"]: data["order"][room] = []
         if full_entity_id not in data["order"][room]: data["order"][room].append(full_entity_id)
 
-        await store.async_save(data)
+        try:
+            await store.async_save(data)
+            _LOGGER.debug("scene_manager: saved data to storage")
+        except Exception as e:
+            _LOGGER.error("scene_manager: failed to save data: %s", e)
         
         state = hass.states.get(full_entity_id)
         if state:
