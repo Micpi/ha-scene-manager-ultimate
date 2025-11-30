@@ -33,7 +33,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.7)")
+    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.9)")
 
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {"meta": {}, "order": {}}
@@ -51,39 +51,60 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # --- SERVICES ---
     
     async def handle_save_scene(call: ServiceCall):
-        scene_id = call.data.get("scene_id")
-        entities = call.data.get("entities", [])
-        icon = call.data.get("icon", "mdi:palette")
-        color = call.data.get("color", "#9E9E9E")
-        room = call.data.get("room", "unknown")
-        
-        full_entity_id = f"scene.{scene_id}"
-
-        await hass.services.async_call(
-            SCENE_DOMAIN, "create",
-            {"scene_id": scene_id, "snapshot_entities": entities},
-            blocking=True
-        )
-
-        data["meta"][full_entity_id] = {"icon": icon, "color": color, "room": room}
-        
-        if room not in data["order"]: data["order"][room] = []
-        if full_entity_id not in data["order"][room]: data["order"][room].append(full_entity_id)
-
+        _LOGGER.info("scene_manager: handle_save_scene called with data: %s", call.data)
         try:
-            await store.async_save(data)
-            _LOGGER.info("scene_manager: saved data to storage. Meta keys: %s", list(data["meta"].keys()))
-        except Exception as e:
-            _LOGGER.error("scene_manager: failed to save data: %s", e)
-        
-        state = hass.states.get(full_entity_id)
-        if state:
-            new_attrs = dict(state.attributes)
-            new_attrs['icon'] = icon
-            new_attrs['theme_color'] = color
-            hass.states.async_set(full_entity_id, state.state, new_attrs)
+            scene_id = call.data.get("scene_id")
+            entities = call.data.get("entities", [])
+            icon = call.data.get("icon", "mdi:palette")
+            color = call.data.get("color", "#9E9E9E")
+            room = call.data.get("room", "unknown")
+            
+            # Nettoyage de sécurité du scene_id
+            import re
+            clean_id = re.sub(r'[^a-z0-9_]', '_', scene_id.lower()).strip('_')
+            if clean_id != scene_id:
+                _LOGGER.warning("scene_manager: scene_id '%s' cleaned to '%s'", scene_id, clean_id)
+                scene_id = clean_id
+            
+            full_entity_id = f"scene.{scene_id}"
 
-        update_sensor()
+            # 1. Créer la scène dans Home Assistant
+            try:
+                await hass.services.async_call(
+                    SCENE_DOMAIN, "create",
+                    {"scene_id": scene_id, "snapshot_entities": entities},
+                    blocking=True
+                )
+                _LOGGER.info("scene_manager: HA scene created: %s", full_entity_id)
+            except Exception as e:
+                _LOGGER.error("scene_manager: Failed to create HA scene: %s", e)
+                return # Stop if we can't create the scene
+
+            # 2. Mettre à jour les métadonnées
+            data["meta"][full_entity_id] = {"icon": icon, "color": color, "room": room}
+            
+            if room not in data["order"]: data["order"][room] = []
+            if full_entity_id not in data["order"][room]: data["order"][room].append(full_entity_id)
+
+            # 3. Sauvegarder sur le disque
+            try:
+                await store.async_save(data)
+                _LOGGER.info("scene_manager: SUCCESS - Data saved to storage. Total scenes: %d", len(data["meta"]))
+            except Exception as e:
+                _LOGGER.error("scene_manager: CRITICAL - Failed to save to storage: %s", e)
+            
+            # 4. Mettre à jour l'état pour l'UI immédiate
+            state = hass.states.get(full_entity_id)
+            if state:
+                new_attrs = dict(state.attributes)
+                new_attrs['icon'] = icon
+                new_attrs['theme_color'] = color
+                hass.states.async_set(full_entity_id, state.state, new_attrs)
+
+            update_sensor()
+            
+        except Exception as e:
+            _LOGGER.error("scene_manager: Unexpected error in handle_save_scene: %s", e)
 
     async def handle_delete_scene(call: ServiceCall):
         entity_id = call.data.get("entity_id")
