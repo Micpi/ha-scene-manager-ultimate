@@ -1,32 +1,32 @@
 save_scene:
   name: Sauvegarder une scène
-  description: Crée ou met à jour une scène et sauvegarde ses métadonnées.
+  description: "Crée ou met à jour une scène et sauvegarde ses métadonnées."
   fields:
     scene_id:
-      description: ID de la scène (ex: salon_film)
+      description: "ID de la scène (ex: salon_film)"
       required: true
       selector:
-        text:
+        text: {}
     entities:
-      description: Liste des entités à inclure
+      description: "Liste des entités à inclure"
       required: true
       selector:
-        object:
+        object: {}
     icon:
-      description: Icône de la scène
+      description: "Icône de la scène"
       selector:
-        icon:
+        icon: {}
     color:
-      description: Couleur du bouton
+      description: "Couleur du bouton"
       selector:
-        color_rgb:
+        color_rgb: {}
 
 delete_scene:
   name: Supprimer une scène
-  description: Supprime la scène et ses métadonnées.
+  description: "Supprime la scène et ses métadonnées."
   fields:
     scene_id:
-      description: ID de la scène à supprimer
+      description: "ID de la scène à supprimer"
       required: true
       selector:
         entity:

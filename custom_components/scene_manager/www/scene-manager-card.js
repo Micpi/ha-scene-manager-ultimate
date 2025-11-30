@@ -1,14 +1,17 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.0.1
+// Version: 1.0.3
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 console.info(
-    `%c SCENE-MANAGER-ULTIMATE %c v1.0.1 `,
+    `%c SCENE-MANAGER-ULTIMATE %c v1.0.3 `,
     'color: white; background: #4CAF50; font-weight: 700;',
     'color: #4CAF50; background: white; font-weight: 700;'
 );
+
+// Version constant used below
+const VERSION = '1.0.3';
 
 // ... Le reste du code de la classe SceneManagerCard ...
 
@@ -579,12 +582,13 @@ class SceneManagerEditor extends HTMLElement {
         .row { display: flex; align-items: center; gap: 15px; margin-bottom: 12px; }
         .label { flex: 0 0 140px; font-weight: 500; color: var(--primary-text-color); }
         input, select { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid var(--divider-color, #ccc); background: var(--card-background-color); color: var(--primary-text-color); box-sizing: border-box; }
+        ha-icon-picker { flex: 1; }
       </style>
       <div class="card-config">
         <div class="option-group">
             <h3>⚙️ Configuration</h3>
             <div class="row"><div class="label">Titre</div><input type="text" id="title" value="${this._config.title || ''}"></div>
-            <div class="row"><div class="label">Icône Titre</div><input type="text" id="icon" value="${this._config.icon || 'mdi:home-floor-1'}"></div>
+            <div class="row"><div class="label">Icône Titre</div><ha-icon-picker id="icon" value="${this._config.icon || 'mdi:home-floor-1'}"></ha-icon-picker></div>
             <div class="row"><div class="label">Pièce Fixe</div><input type="text" id="room" value="${this._config.room || ''}" placeholder="Optionnel (ex: salon)"></div>
         </div>
         <div class="option-group">
@@ -607,6 +611,15 @@ class SceneManagerEditor extends HTMLElement {
                 this.configChanged(newConfig);
             });
         });
+
+        const iconPicker = this.shadowRoot.getElementById("icon");
+        if (iconPicker) {
+            iconPicker.addEventListener("value-changed", (e) => {
+                const newConfig = { ...this._config };
+                newConfig.icon = e.detail.value;
+                this.configChanged(newConfig);
+            });
+        }
     }
 }
 

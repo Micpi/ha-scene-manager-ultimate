@@ -1,11 +1,13 @@
 import logging
 import json
 import os
+import shutil
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.scene import DOMAIN as SCENE_DOMAIN
-# --- IMPORT CORRIGÉ ---
 from homeassistant.helpers.storage import Store 
+# --- IMPORT NOUVEAU POUR LA CORRECTION HTTP ---
+from homeassistant.components.http import StaticPathConfig
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "scene_manager"
@@ -13,17 +15,30 @@ STORAGE_KEY = "scene_manager_data"
 STORAGE_VERSION = 1
 
 async def async_setup(hass: HomeAssistant, config: dict):
+    # Register static path so the frontend asset is available even before
+    # a config entry is created. This exposes the file at /scene_manager/card.js
+    try:
+        await hass.http.async_register_static_paths([
+            StaticPathConfig(
+                "/scene_manager/card.js",
+                hass.config.path("custom_components/scene_manager/www/scene-manager-card.js"),
+                True,
+            )
+        ])
+    except Exception:
+        # If API not available, just ignore; path will be registered when the
+        # config entry is set up (in async_setup_entry).
+        _LOGGER.debug("Could not register static path at startup; will try on setup_entry")
+
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    
-    # --- LIGNE CORRIGÉE ---
-    # On utilise la classe Store importée directement
-    store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
-    
-    data = await store.async_load() or {"meta": {}, "order": {}}
+    _LOGGER.debug("scene_manager: async_setup_entry start for entry %s", entry.entry_id if hasattr(entry, 'entry_id') else entry)
 
-    # Fonction pour mettre à jour le sensor
+    store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+    data = await store.async_load() or {"meta": {}, "order": {}}
+    _LOGGER.debug("scene_manager: loaded storage data keys: %s", list(data.keys()))
+
     def update_sensor():
         hass.states.async_set(
             "sensor.scene_manager_registry", 
@@ -31,10 +46,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             {"meta": data["meta"], "order": data["order"]}
         )
 
-    # Init du sensor
     update_sensor()
 
-    # --- DÉFINITION DES SERVICES ---
+    # --- SERVICES ---
     
     async def handle_save_scene(call: ServiceCall):
         scene_id = call.data.get("scene_id")
@@ -45,14 +59,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         
         full_entity_id = f"scene.{scene_id}"
 
-        # Appel natif
         await hass.services.async_call(
             SCENE_DOMAIN, "create",
             {"scene_id": scene_id, "snapshot_entities": entities},
             blocking=True
         )
 
-        # Sauvegarde Meta
         data["meta"][full_entity_id] = {"icon": icon, "color": color, "room": room}
         
         if room not in data["order"]: data["order"][room] = []
@@ -60,7 +72,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         await store.async_save(data)
         
-        # Force state update (pour l'icone immédiate)
         state = hass.states.get(full_entity_id)
         if state:
             new_attrs = dict(state.attributes)
@@ -72,12 +83,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     async def handle_delete_scene(call: ServiceCall):
         entity_id = call.data.get("entity_id")
-        
-        # On essaie de supprimer l'entité de HA
         try:
             hass.states.async_remove(entity_id)
         except:
-            pass # Pas grave si elle n'existe déjà plus
+            pass
         
         if entity_id in data["meta"]: del data["meta"][entity_id]
         
@@ -95,7 +104,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         update_sensor()
     
     async def handle_set_state(call: ServiceCall):
-        # Remplacement du script Python manuel
         eid = call.data.get("entity_id")
         st = call.data.get("state")
         attrs = call.data.get("attributes")
@@ -105,7 +113,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         if eid:
             ns = hass.states.get(eid)
             c_st = ns.state if ns else (st or "unknown")
-            c_at = dict(ns.attributes) if ns else {} # Copie propre
+            c_at = dict(ns.attributes) if ns else {}
             
             if st: c_st = st
             if attrs: c_at.update(attrs)
@@ -114,23 +122,129 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             
             hass.states.async_set(eid, c_st, c_at)
 
-    # Enregistrement des services
     hass.services.async_register(DOMAIN, "save_scene", handle_save_scene)
     hass.services.async_register(DOMAIN, "delete_scene", handle_delete_scene)
     hass.services.async_register(DOMAIN, "reorder_scenes", handle_reorder)
-    
-    # On enregistre les alias "python_script" pour garder la compatibilité avec le JS
     hass.services.async_register("python_script", "set_state", handle_set_state)
     hass.services.async_register("python_script", "delete_entity", handle_delete_scene)
 
-    # Exposition du fichier JS
-    hass.http.register_static_path(
-        "/scene_manager/card.js",
-        hass.config.path("custom_components/scene_manager/www/scene-manager-card.js"),
-    )
+    # --- CORRECTION MAJEURE ICI ---
+    # On utilise la nouvelle méthode async_register_static_paths
+    try:
+        await hass.http.async_register_static_paths([
+            StaticPathConfig(
+                "/scene_manager/card.js",
+                hass.config.path("custom_components/scene_manager/www/scene-manager-card.js"),
+                True
+            )
+        ])
+    except RuntimeError as err:
+        # Route already registered (e.g. registered in async_setup). Ignore.
+        _LOGGER.debug("scene_manager: static path already registered: %s", err)
+    except Exception as err:
+        _LOGGER.debug("scene_manager: could not register static path: %s", err)
+
+    # Copier le fichier JS dans le répertoire `www/` de Home Assistant si possible
+    try:
+        www_dir = hass.config.path("www")
+        if www_dir and os.path.isdir(www_dir):
+            src = hass.config.path("custom_components/scene_manager/www/scene-manager-card.js")
+            dst = os.path.join(www_dir, "scene-manager-card.js")
+            try:
+                # Écrire seulement si le fichier n'existe pas ou diffère
+                if (not os.path.exists(dst)) or (os.path.getmtime(src) > os.path.getmtime(dst)):
+                    shutil.copyfile(src, dst)
+                    _LOGGER.info("scene_manager: copied scene-manager-card.js to %s", dst)
+                    # mark that we copied the file so we can remove it on uninstall
+                    data["copied_to_www"] = True
+                    await store.async_save(data)
+            except Exception as ex:
+                _LOGGER.debug("scene_manager: could not copy JS to www: %s", ex)
+    except Exception:
+        pass
+
+    # Inform the user (persistent notification) to add the resource in Lovelace
+    try:
+        # On utilise une nouvelle clé 'resource_notified_v2' pour forcer l'affichage
+        # au moins une fois après cette mise à jour, même si une ancienne installation existait.
+        already_notified = data.get("resource_notified_v2", False)
+        user_wants_notification = entry.data.get("notify_add_resource", True)
+        
+        _LOGGER.debug("scene_manager: already_notified=%s, user_wants=%s", already_notified, user_wants_notification)
+
+        if user_wants_notification and not already_notified:
+            message = (
+                "La carte `scene-manager-card.js` a été copiée dans `/local/` sur votre instance Home Assistant.\n\n"
+                "Pour l'ajouter à Lovelace :\n"
+                "1. UI → Configuration → Tableaux de bord → Ressources\n"
+                "2. Cliquez sur 'Ajouter une ressource' → URL : `/local/scene-manager-card.js` → Type : Module JavaScript\n\n"
+                "Vous pouvez forcer le rafraîchissement en ajoutant `?v=...` à l'URL si nécessaire."
+            )
+            _LOGGER.debug("scene_manager: creating persistent notification to ask user to add resource")
+            await hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "Scene Manager — Ajouter la ressource Lovelace",
+                    "message": message,
+                    "notification_id": "scene_manager_add_resource",
+                },
+                blocking=True,
+            )
+            data["resource_notified_v2"] = True
+            await store.async_save(data)
+            _LOGGER.debug("scene_manager: persistent notification created and storage updated")
+    except Exception as ex:
+        _LOGGER.debug("scene_manager: could not create persistent notification: %s", ex)
 
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Supprime l'intégration."""
+    # remove services
+    hass.services.async_remove(DOMAIN, "save_scene")
+    hass.services.async_remove(DOMAIN, "delete_scene")
+    hass.services.async_remove(DOMAIN, "reorder_scenes")
+
+    # load storage and cleanup copied files / notifications
+    store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+    try:
+        data = await store.async_load() or {}
+    except Exception:
+        data = {}
+
+    # remove copied www file if we created it
+    try:
+        if data.get("copied_to_www"):
+            www_file = hass.config.path("www/scene-manager-card.js")
+            if os.path.exists(www_file):
+                try:
+                    os.remove(www_file)
+                    _LOGGER.info("scene_manager: removed copied www file %s", www_file)
+                except Exception as ex:
+                    _LOGGER.debug("scene_manager: could not remove www file: %s", ex)
+            # unset the flag and remove storage
+    except Exception:
+        pass
+
+    # remove the registry sensor
+    try:
+        if hass.states.get("sensor.scene_manager_registry"):
+            hass.states.async_remove("sensor.scene_manager_registry")
+    except Exception:
+        pass
+
+    # dismiss persistent notifications we may have created
+    for nid in ("scene_manager_add_resource", "scene_manager_add_resource_configflow", "scene_manager_add_resource_options"):
+        try:
+            hass.services.async_call("persistent_notification", "dismiss", {"notification_id": nid})
+        except Exception:
+            pass
+
+    # remove stored data file to ensure a clean reinstall
+    try:
+        await store.async_remove()
+        _LOGGER.info("scene_manager: removed stored data on unload")
+    except Exception:
+        pass
+
     return True

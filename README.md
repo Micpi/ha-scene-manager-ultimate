@@ -1,75 +1,114 @@
-# 🏠 Scene Manager Ultimate
+# 🎬 Scene Manager Ultimate
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
-[![Version](https://img.shields.io/badge/version-1.0.1-blue)]()
+**Scene Manager Ultimate** est une solution complète pour Home Assistant qui vous permet de créer, gérer et organiser vos scènes directement depuis votre tableau de bord Lovelace. Fini l'édition manuelle de fichiers YAML pour ajuster vos ambiances lumineuses !
 
-**Scene Manager Ultimate** est une solution complète (Intégration + Carte) pour Home Assistant qui réinvente la gestion de l'éclairage.
-
-Contrairement aux cartes classiques, cette intégration possède son propre "cerveau" (Backend) qui gère la synchronisation en temps réel entre tous les appareils et la persistance des données (couleurs, icônes, ordre) sans dépendre de scripts tiers.
-
-![Preview](https://via.placeholder.com/800x400.png?text=Capture+d'écran+Scene+Manager)
-
-## ✨ Pourquoi utiliser Scene Manager ?
-
-* **📦 Tout-en-un :** Pas de scripts Python à copier manuellement. Installez l'intégration, et tout fonctionne.
-* **⚡ Synchronisation Instantanée :** Modifiez une scène sur votre PC, la tablette murale se met à jour dans la seconde.
-* **🧠 Détection Intelligente :** La carte scanne vos pièces (Areas) et détecte automatiquement les lumières associées.
-* **🎨 Studio de Création :**
-  * Interface visuelle pour régler les lumières (Sliders & Toggles).
-  * **Drag & Drop** fluide pour organiser vos scènes.
-  * Personnalisation des icônes et des couleurs.
-* **💾 Persistance Robuste :** Vos configurations survivent aux redémarrages de Home Assistant.
+![Version](https://img.shields.io/badge/version-1.0.3-blue)
+![Maintenance](https://img.shields.io/badge/maintainer-Micpi-green)
+![HACS](https://img.shields.io/badge/HACS-Custom-orange)
 
 ---
 
-## ⚙️ Installation
+## ✨ Fonctionnalités
 
-### Option 1 : Via HACS (Recommandé)
-
-1. Assurez-vous d'avoir [HACS](https://hacs.xyz/) installé.
-2. Allez dans **HACS > Intégrations**.
-3. Cliquez sur le menu (3 points) > **Dépôts personnalisés**.
-4. Ajoutez l'URL de ce dépôt.
-5. Cherchez **"Scene Manager Ultimate"** et cliquez sur **Installer**.
-6. **Redémarrez Home Assistant**.
-
-### Option 2 : Installation Manuelle
-
-1. Téléchargez ce dépôt.
-2. Copiez le dossier `custom_components/scene_manager` dans votre dossier `/config/custom_components/`.
-3. **Redémarrez Home Assistant**.
+- **Création Intuitive** : Créez des scènes en un clic en capturant l'état actuel de vos entités (lumières, switchs, etc.).
+- **Interface Tactile** : Une carte Lovelace dédiée (`scene-manager-card`) élégante, réactive et entièrement personnalisable.
+- **Personnalisation Visuelle** : Choisissez l'icône et la couleur de chaque scène pour une identification rapide.
+- **Organisation Avancée** :
+  - **Drag & Drop** : Réorganisez vos scènes par simple glisser-déposer directement sur la carte (mode édition).
+  - **Filtrage par Pièce** : Associez des scènes à des pièces spécifiques pour n'afficher que ce qui est pertinent.
+- **Installation Simplifiée** : L'intégration gère automatiquement la copie des ressources JavaScript (`.js`) et vous notifie pour la configuration.
+- **Nettoyage Automatique** : Désinstallation propre qui supprime les fichiers copiés et les données de stockage.
 
 ---
 
-## 🔧 Configuration Initiale
+## 🚀 Installation
 
-Une fois installé et redémarré :
+### Via HACS (Recommandé)
 
-1. Allez dans **Paramètres > Appareils et services > Ajouter une intégration**.
-2. Cherchez **"Scene Manager"**.
-3. Validez (aucune configuration requise, cela active juste le moteur).
+1. Ouvrez HACS dans Home Assistant.
+2. Ajoutez ce dépôt en tant que **Dépôt Personnalisé** (Custom Repository).
+3. Recherchez "Scene Manager Ultimate" et installez-le.
+4. Redémarrez Home Assistant.
+
+### Installation Manuelle
+
+1. Téléchargez le code source.
+2. Copiez le dossier `custom_components/scene_manager` dans votre dossier `config/custom_components/`.
+3. Redémarrez Home Assistant.
 
 ---
 
-## 📱 Ajout de la Carte (Dashboard)
+## ⚙️ Configuration
 
-1. Allez sur votre tableau de bord.
-2. Cliquez sur **Modifier** > **Ajouter une carte**.
-3. Recherchez **"Scene Manager"**.
-4. L'éditeur visuel s'ouvre :
+### 1. Activer l'intégration
+
+Une fois installé et Home Assistant redémarré :
+
+1. Allez dans **Paramètres** > **Appareils et services**.
+2. Cliquez sur **Ajouter une intégration**.
+3. Cherchez **Scene Manager Ultimate** et validez.
+
+> 💡 **Note** : Une notification persistante apparaîtra pour vous confirmer que la ressource JavaScript a été copiée dans `/local/` et vous guidera pour l'ajouter à vos ressources Lovelace si nécessaire.
+
+### 2. Ajouter la carte au tableau de bord
+
+Dans votre tableau de bord Lovelace :
+
+1. Cliquez sur le menu (trois points) > **Modifier le tableau de bord**.
+2. Cliquez sur **Ajouter une carte**.
+3. Recherchez **Scene Manager Ultimate**.
+
+#### Options de la carte (Éditeur Visuel)
 
 | Option | Description |
 | :--- | :--- |
-| **Titre** | Nom affiché en haut de la carte. |
-| **Pièce Fixe** | (Optionnel) ID de la zone pour créer un mode "Kiosque" bloqué sur une pièce. Laissez vide pour avoir le menu de navigation global. |
-| **Style** | Choisissez l'apparence des boutons (Plein, Contour, Transparent, Rond, Carré...). |
+| **Titre** | Le titre affiché en haut de la carte (ex: "Mes Ambiances"). |
+| **Icône Titre** | L'icône affichée à côté du titre. |
+| **Pièce Fixe** | (Optionnel) Si renseigné, la carte n'affichera que les scènes associées à cette pièce (ex: `salon`). |
+| **Style Bouton** | Choisissez entre `Plein` (Filled), `Contour` (Outline) ou `Transparent` (Ghost). |
+| **Forme Bouton** | `Arrondi`, `Carré` ou `Rond`. |
+| **Dimensions** | Ajustez la largeur et la hauteur des boutons pour s'adapter à votre design. |
 
-### Code YAML (Exemple)
+---
 
-```yaml
-type: custom:scene-manager-card
-title: "Gestion Maison"
-icon: "mdi:home-assistant"
-button_style: "filled"
-button_shape: "rounded"
-scene_alignment: "left"
+## 🛠 Services Techniques
+
+Pour les utilisateurs avancés souhaitant scripter la création de scènes, l'intégration expose des services :
+
+### `scene_manager.save_scene`
+
+Crée ou met à jour une scène avec ses métadonnées personnalisées.
+
+- **scene_id** (Requis) : Identifiant unique (ex: `soiree_film`).
+- **entities** (Requis) : Liste des entités à inclure dans la capture.
+- **icon** : Icône MDI (ex: `mdi:movie`).
+- **color** : Couleur hexadécimale (ex: `#FF5722`).
+- **room** : Pièce associée pour le filtrage.
+
+### `scene_manager.delete_scene`
+
+Supprime une scène et ses métadonnées du stockage.
+
+- **entity_id** : L'entité scène à supprimer (ex: `scene.soiree_film`).
+
+### `scene_manager.reorder_scenes`
+
+Met à jour l'ordre d'affichage des scènes pour une pièce donnée.
+
+---
+
+## ❓ Dépannage
+
+### Erreur : "Custom element doesn't exist: scene-manager-card"
+
+- Cela signifie que le navigateur ne trouve pas le fichier JavaScript de la carte.
+- Vérifiez dans **Paramètres** > **Tableaux de bord** > **Ressources** que vous avez bien une entrée :
+  - **URL** : `/local/scene-manager-card.js`
+  - **Type** : Module JavaScript
+- Si l'erreur persiste, videz le cache de votre navigateur ou essayez en navigation privée.
+
+---
+
+## 📄 Licence
+
+Ce projet est développé par **Micpi** et est distribué sous licence MIT.
