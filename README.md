@@ -2,7 +2,7 @@
 
 **Scene Manager Ultimate** est une solution complète pour Home Assistant qui vous permet de créer, gérer et organiser vos scènes directement depuis votre tableau de bord Lovelace. Fini l'édition manuelle de fichiers YAML pour ajuster vos ambiances lumineuses !
 
-![Version](https://img.shields.io/badge/version-1.0.7-blue)
+![Version](https://img.shields.io/badge/version-1.0.8-blue)
 ![Maintenance](https://img.shields.io/badge/maintainer-Micpi-green)
 ![HACS](https://img.shields.io/badge/HACS-Custom-orange)
 

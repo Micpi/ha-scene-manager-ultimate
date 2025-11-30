@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.0.7
+// Version: 1.0.8
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.0.7';
+const VERSION = '1.0.8';
 
 // ... Le reste du code de la classe SceneManagerCard ...
 
@@ -470,7 +470,11 @@ class SceneManagerCard extends HTMLElement {
         const name = this.inputName.value; if (!name) return alert("Nom vide !");
         const room = this.currentRoom.toLowerCase(); if (!room) return alert("Aucune pièce");
         const color = this.inputColor.value; const iconToSave = this.currentIcon;
-        const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+
+        // Improved slug generation: remove special chars, replace spaces with _, trim _
+        let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+        if (!slug) slug = "scene_" + Date.now();
+
         const shortId = `${room}_${slug}`; const newEntityId = `scene.${shortId}`;
         const checkboxes = this.shadowRoot.querySelectorAll(".light-select:checked");
         const selectedLights = Array.from(checkboxes).map(cb => cb.dataset.entity);
