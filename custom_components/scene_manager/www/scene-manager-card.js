@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.0.11
+// Version: 1.0.12
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.0.11';
+const VERSION = '1.0.12';
 
 // ... Le reste du code de la classe SceneManagerCard ...
 
@@ -35,7 +35,7 @@ const PRESET_ICONS = [
 
 class SceneManagerCard extends HTMLElement {
     static getConfigElement() { return document.createElement("scene-manager-editor"); }
-    static getStubConfig() { return { title: "Mes Scènes", icon: "mdi:home-floor-1", button_style: "filled", button_shape: "rounded", scene_alignment: "left", button_width: "100px", button_height: "80px" }; }
+    static getStubConfig() { return { title: "Mes Scènes", icon: "mdi:home-floor-1", show_title: true, button_style: "filled", button_shape: "rounded", scene_alignment: "left", button_width: "100px", button_height: "80px", card_background_style: 'theme', card_background_color: '#ffffff', button_bg_color: '#eeeeee', button_icon_color: '#000000', button_text_color: '#000000', title_style: 'normal', title_icon_color: '#000000', menu_background_style: 'theme', menu_background_color: '#ffffff' }; }
 
     set hass(hass) {
         this._hass = hass;
@@ -63,6 +63,11 @@ class SceneManagerCard extends HTMLElement {
     }
 
     setConfig(config) {
+        // Determine previous show_title value for header re-render decisions
+        const prevShowTitle = this.config ? this.config.show_title : undefined;
+        // Avoid unnecessary updates if config hasn't changed
+        if (this.config && JSON.stringify(this.config) === JSON.stringify(config)) return;
+
         this.config = config;
         const oldFixed = this.fixedRoom;
         this.fixedRoom = config.room ? config.room.toLowerCase() : null;
@@ -76,7 +81,7 @@ class SceneManagerCard extends HTMLElement {
             const list = this.shadowRoot.getElementById("sceneList");
             if (list) list.style.justifyContent = this.alignment;
 
-            if (oldFixed !== this.fixedRoom || this.lastTitle !== config.title) {
+            if (oldFixed !== this.fixedRoom || this.lastTitle !== config.title || prevShowTitle !== config.show_title) {
                 this._renderHeader();
                 this.lastTitle = config.title;
                 if (this.fixedRoom) {
@@ -86,6 +91,9 @@ class SceneManagerCard extends HTMLElement {
                 }
             }
             this.shouldUpdate = true;
+            // Apply appearance variables whenever config changes
+            try { this._applyAppearance(); } catch (e) { /* ignore */ }
+            if (!this._hass) this._updateFakeButtons();
         }
     }
 
@@ -105,24 +113,25 @@ class SceneManagerCard extends HTMLElement {
 
         this.shadowRoot.innerHTML = `
         <style>
-          ha-card { 
-            padding: 0; display: flex; flex-direction: column; 
-            background: none; box-shadow: none; border: none;
-            font-family: var(--paper-font-body1_-_font-family);
-          }
+                    ha-card { 
+                        padding: 0; display: flex; flex-direction: column; 
+                        background: var(--scene-manager-card-bg, none); box-shadow: var(--scene-manager-card-shadow, none); border: none;
+                        font-family: var(--paper-font-body1_-_font-family);
+                        border-radius: var(--scene-manager-card-radius, 12px);
+                    }
           .control-bar { display: flex; align-items: center; gap: 12px; background: transparent; padding: 4px 16px 12px 16px; box-shadow: none; border: none; }
-          .header-icon { --mdc-icon-size: 28px; color: var(--primary-color); opacity: 0.9; }
-          .fixed-title { flex: 1; font-size: 22px; font-weight: 500; letter-spacing: 0.5px; color: var(--primary-text-color); display: flex; align-items: center; font-family: var(--paper-font-headline_-_font-family); }
+          .header-icon { --mdc-icon-size: 28px; color: var(--scene-manager-title-icon-color, var(--primary-color)); opacity: 0.9; }
+          .fixed-title { flex: 1; font-size: 22px; font-weight: var(--scene-manager-title-weight, 500); letter-spacing: 0.5px; color: var(--primary-text-color); display: flex; align-items: center; font-family: var(--paper-font-headline_-_font-family); text-transform: var(--scene-manager-title-transform, none); }
           select.room-selector { flex: 1; padding: 0; font-size: 22px; font-weight: 500; letter-spacing: 0.5px; border: none; background: transparent; color: var(--primary-text-color); cursor: pointer; outline: none; font-family: var(--paper-font-headline_-_font-family); -webkit-appearance: none; -moz-appearance: none; appearance: none; }
           select.room-selector option { background-color: var(--card-background-color, #202020); color: var(--primary-text-color, #ffffff); }
           .toggle-btn { cursor: pointer; color: var(--primary-text-color); opacity: 0.6; transition: all 0.3s; background: transparent; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid transparent; }
           .toggle-btn:hover { background: rgba(var(--rgb-primary-color), 0.1); color: var(--primary-color); opacity: 1; }
           .toggle-btn.active { background: rgba(255, 0, 0, 0.1); color: #f44336; opacity: 1; transform: rotate(0deg); }
           .toggle-btn.save-mode { background: #4CAF50; color: white; opacity: 1; box-shadow: 0 2px 8px rgba(76, 175, 80, 0.4); }
-          .scene-list { display: flex; gap: 12px; overflow-x: auto; padding: 4px 16px 25px 16px; scroll-behavior: smooth; scrollbar-width: none; min-height: calc(${this.btnHeight} + 10px); scroll-snap-type: x mandatory; justifyContent: ${this.alignment}; }
+          .scene-list { display: flex; gap: var(--scene-manager-btn-spacing, 12px); overflow-x: auto; padding: 4px 16px 25px 16px; scroll-behavior: smooth; scrollbar-width: none; min-height: calc(${this.btnHeight} + 10px); scroll-snap-type: x mandatory; justify-content: ${this.alignment}; }
           .scene-list::-webkit-scrollbar { display: none; }
-          .scene-btn { position: relative; color: var(--primary-text-color); cursor: pointer; text-align: center; font-weight: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-width: ${this.btnWidth}; width: ${this.btnWidth}; height: ${this.btnHeight}; flex-shrink: 0; scroll-snap-align: start; transition: transform 0.1s ease-in-out, background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s; user-select: none; box-sizing: border-box; --btn-icon-color: var(--primary-text-color); }
-          #creationArea { max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out, opacity 0.3s ease-out, margin 0.3s; opacity: 0; background: var(--card-background-color, white); border-radius: 16px; margin-top: 0px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid transparent; }
+          .scene-btn { position: relative; color: var(--scene-manager-btn-text, var(--primary-text-color)); cursor: pointer; text-align: center; font-weight: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-width: ${this.btnWidth}; width: ${this.btnWidth}; height: ${this.btnHeight}; flex-shrink: 0; scroll-snap-align: start; transition: transform 0.1s ease-in-out, background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s; user-select: none; box-sizing: border-box; --btn-icon-color: var(--primary-text-color); border-radius: var(--scene-manager-btn-border-radius, 16px); box-shadow: var(--scene-manager-btn-shadow, none); }
+          #creationArea { max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out, opacity 0.3s ease-out, margin 0.3s; opacity: 0; background: var(--scene-manager-creation-bg, var(--card-background-color, white)); border-radius: 16px; margin-top: 0px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid transparent; }
           #creationArea.open { max-height: 800px; opacity: 1; padding: 16px; margin-top: 0px; border: 1px solid var(--divider-color, #eee); overflow-y: auto; }
           .scene-btn.being-edited { border: 2px solid #4CAF50 !important; box-shadow: 0 0 15px rgba(76, 175, 80, 0.5) !important; transform: scale(0.98); }
           .color-wrapper { position: relative; width: 48px; height: 48px; flex-shrink: 0; border-radius: 50%; overflow: hidden; border: 1px solid var(--divider-color, #ccc); cursor: pointer; box-sizing: border-box; }
@@ -131,14 +140,14 @@ class SceneManagerCard extends HTMLElement {
           input[type=text] { flex: 1; height: 48px; padding: 0 12px; border: 1px solid var(--divider-color, #ccc); background: var(--secondary-background-color); color: var(--primary-text-color); border-radius: 8px; font-size: 16px; box-sizing: border-box; }
           button.save-btn-action { background-color: var(--primary-color, #03a9f4); color: white; border: none; border-radius: 8px; height: 48px; width: 48px; min-width: 48px; padding: 0; cursor: pointer; font-weight: bold; font-size: 24px; transition: background 0.3s; display: flex; align-items: center; justify-content: center; }
           button.save-btn-action.save-mode { background-color: #4CAF50; }
-          .style-filled { background: var(--secondary-background-color, #eee); border: 1px solid var(--divider-color, #eee); box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+          .style-filled { background: var(--scene-manager-btn-bg, var(--secondary-background-color, #eee)); border: 1px solid var(--divider-color, #eee); box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
           .style-outline { background: transparent; border: 2px solid var(--btn-icon-color); color: var(--primary-text-color); }
           .style-ghost { background: transparent; border: 1px solid transparent; }
           .shape-rounded { border-radius: 16px; }
           .shape-box { border-radius: 8px; }
           .shape-circle { border-radius: 50%; width: ${this.btnWidth}; height: ${this.btnWidth}; }
           .scene-btn ha-icon { pointer-events: none; color: var(--btn-icon-color); transition: color 0.3s; } 
-          .scene-btn span { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; pointer-events: none; }
+          .scene-btn span { width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; pointer-events: none; color: var(--scene-manager-btn-text, var(--primary-text-color)); }
           .scene-btn:active { transform: scale(0.92); }
           .scene-btn.activated { border-color: #4CAF50; box-shadow: 0 0 10px rgba(76, 175, 80, 0.2); }
           .scene-btn.activated ha-icon { color: #4CAF50 !important; transform: scale(1.2); }
@@ -170,6 +179,11 @@ class SceneManagerCard extends HTMLElement {
           .icon-picker { display: flex; gap: 10px; overflow-x: auto; padding: 8px 4px 15px 4px; scrollbar-width: thin; }
           .icon-option { background: var(--secondary-background-color, #eee); color: var(--primary-text-color); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; border: 2px solid transparent; transition: all 0.2s; }
           .icon-option.selected { background: var(--card-background-color, white); color: var(--primary-color); border-color: var(--primary-color); transform: scale(1.15); box-shadow: 0 3px 6px rgba(0,0,0,0.2); }
+                    .scene-list-end-toggle { margin-left: auto; display: flex; align-items: center; padding-right: 8px; }
+                    /* Faux scene-like toggle: visually matches .scene-btn but is not treated as a real scene button */
+                    .scene-list-end-toggle .faux-scene-btn {
+                        position: relative; color: var(--scene-manager-btn-text, var(--primary-text-color)); cursor: pointer; text-align: center; font-weight: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-width: ${this.btnWidth}; width: ${this.btnWidth}; height: ${this.btnHeight}; flex-shrink: 0; scroll-snap-align: start; transition: transform 0.1s ease-in-out, background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s; user-select: none; box-sizing: border-box; --btn-icon-color: var(--primary-text-color); border-radius: var(--scene-manager-btn-border-radius, 16px); box-shadow: var(--scene-manager-btn-shadow, none);
+                    }
         </style>
         
         <ha-card>
@@ -202,9 +216,96 @@ class SceneManagerCard extends HTMLElement {
 
         this._renderHeader();
         this._renderIconPicker();
-        this._fetchData();
+        if (this._hass) {
+            this._fetchData();
+        } else {
+            // Preview mode: create fake buttons
+            this._createFakeButtons();
+        }
+        // Apply appearance variables initially
+        this._applyAppearance();
 
         this.saveBtn.addEventListener("click", () => this._saveScene());
+    }
+
+    _createFakeButtons() {
+        const btnStyle = this.config.button_style || 'filled';
+        const btnShape = this.config.button_shape || 'rounded';
+        for (let i = 0; i < 3; i++) {
+            const btn = document.createElement("div");
+            btn.className = `scene-btn style-${btnStyle} shape-${btnShape}`;
+            btn.innerHTML = `<ha-icon icon="mdi:palette"></ha-icon><span>Scène ${i + 1}</span>`;
+            this.content.appendChild(btn);
+        }
+    }
+
+    _updateFakeButtons() {
+        const btns = this.shadowRoot.querySelectorAll('.scene-btn');
+        const btnStyle = this.config.button_style || 'filled';
+        const btnShape = this.config.button_shape || 'rounded';
+        btns.forEach(btn => {
+            btn.className = `scene-btn style-${btnStyle} shape-${btnShape}`;
+        });
+        // Also update the faux toggle (if present) so preview matches chosen style/shape/size
+        const fauxToggles = this.shadowRoot.querySelectorAll('.faux-scene-btn');
+        fauxToggles.forEach(toggle => {
+            toggle.className = `toggle-btn faux-scene-btn style-${btnStyle} shape-${btnShape}`;
+            // sizing should follow current button dimensions
+            try { toggle.style.width = this.btnWidth; toggle.style.height = this.btnHeight; toggle.style.minWidth = this.btnWidth; } catch (e) { /* ignore */ }
+        });
+    }
+
+    _applyAppearance() {
+        // Apply appearance configuration to CSS variables on the ha-card
+        try {
+            const card = this.shadowRoot.querySelector('ha-card');
+            if (!card) return;
+
+            const cfg = this.config || {};
+            // Card background
+            const bgStyle = cfg.card_background_style || 'theme';
+            let cardBg = 'none';
+            if (bgStyle === 'theme') cardBg = 'var(--card-background-color)';
+            else if (bgStyle === 'transparent') cardBg = 'transparent';
+            else if (bgStyle === 'custom') cardBg = (cfg.card_background_color || 'transparent');
+
+            // Button colors
+            const btnBg = cfg.button_bg_color || 'var(--secondary-background-color, #eee)';
+            const btnIcon = cfg.button_icon_color || 'var(--primary-text-color)';
+            const btnText = cfg.button_text_color || 'var(--primary-text-color)';
+
+            // Title icon color and title style
+            const titleIconColor = cfg.title_icon_color || '';
+            const titleStyle = cfg.title_style || 'normal';
+
+            // Menu / creation area background
+            const menuStyle = cfg.menu_background_style || 'theme';
+            let menuBg = 'var(--card-background-color)';
+            if (menuStyle === 'theme') menuBg = 'var(--card-background-color)';
+            else if (menuStyle === 'transparent') menuBg = 'transparent';
+            else if (menuStyle === 'custom') menuBg = (cfg.menu_background_color || 'transparent');
+
+            card.style.setProperty('--scene-manager-card-bg', cardBg);
+            card.style.setProperty('--scene-manager-btn-bg', btnBg);
+            card.style.setProperty('--btn-icon-color', btnIcon);
+            card.style.setProperty('--scene-manager-btn-text', btnText);
+            if (titleIconColor) card.style.setProperty('--scene-manager-title-icon-color', titleIconColor); else card.style.removeProperty('--scene-manager-title-icon-color');
+            card.style.setProperty('--scene-manager-creation-bg', menuBg);
+
+            // Button spacing
+            const btnSpacing = cfg.button_spacing || '12';
+            card.style.setProperty('--scene-manager-btn-spacing', `${btnSpacing}px`);
+
+            // Title style mapping: weight + transform
+            let weight = '500'; let transform = 'none';
+            if (titleStyle === 'bold') weight = '700';
+            if (titleStyle === 'uppercase') transform = 'uppercase';
+            if (titleStyle === 'uppercase_bold') { weight = '700'; transform = 'uppercase'; }
+            card.style.setProperty('--scene-manager-title-weight', weight);
+            card.style.setProperty('--scene-manager-title-transform', transform);
+        } catch (e) {
+            console.warn('scene-manager: _applyAppearance error', e);
+        }
     }
 
     _renderHeader() {
@@ -212,6 +313,58 @@ class SceneManagerCard extends HTMLElement {
         const showIcon = this.config.show_icon !== false;
         const title = this.config.title || (this.fixedRoom ? "" : "Mes Scènes");
 
+        const showTitle = this.config.show_title !== false;
+
+        // Remove any existing end-toggle wrapper when re-rendering
+        const existingWrapper = this.shadowRoot.querySelector('.scene-list-end-toggle');
+        if (existingWrapper && existingWrapper.parentElement) existingWrapper.parentElement.removeChild(existingWrapper);
+
+        if (!showTitle) {
+            // Hide header and place the toggle button at the end of the scene list
+            this.headerContainer.innerHTML = '';
+
+            // create or reuse toggle button (faux scene-like button so it is not counted as a real scene)
+            const btnStyle = (this.config && this.config.button_style) ? this.config.button_style : 'filled';
+            const btnShape = (this.config && this.config.button_shape) ? this.config.button_shape : 'rounded';
+            let toggle = this.shadowRoot.getElementById('toggleMenuBtn');
+            if (!toggle) {
+                toggle = document.createElement('div');
+                toggle.className = `toggle-btn faux-scene-btn style-${btnStyle} shape-${btnShape}`;
+                toggle.id = 'toggleMenuBtn';
+                toggle.innerHTML = `<ha-icon icon="mdi:plus" id="toggleIcon"></ha-icon>`;
+                // ensure same sizing as scene buttons
+                toggle.style.width = this.btnWidth; toggle.style.height = this.btnHeight; toggle.style.minWidth = this.btnWidth;
+                const wrapper = document.createElement('div');
+                wrapper.className = 'scene-list-end-toggle';
+                wrapper.appendChild(toggle);
+                // append wrapper as last child of scene list to remain at end
+                const list = this.shadowRoot.getElementById('sceneList');
+                if (list) list.appendChild(wrapper);
+            } else {
+                // ensure it's moved to end and matching classes
+                const wrapper = toggle.parentElement;
+                const list = this.shadowRoot.getElementById('sceneList');
+                if (wrapper && list) list.appendChild(wrapper);
+                toggle.className = `toggle-btn faux-scene-btn style-${btnStyle} shape-${btnShape}`;
+                toggle.style.width = this.btnWidth; toggle.style.height = this.btnHeight; toggle.style.minWidth = this.btnWidth;
+            }
+
+            this.toggleBtn = this.shadowRoot.getElementById('toggleMenuBtn');
+            this.toggleIcon = this.shadowRoot.getElementById('toggleIcon');
+            if (this.toggleBtn) {
+                // ensure single handler (avoid duplicates) and provide keyboard accessibility
+                this.toggleBtn.onclick = () => this._toggleMenu();
+                this.toggleBtn.setAttribute('tabindex', '0');
+                this.toggleBtn.setAttribute('role', 'button');
+                this.toggleBtn.setAttribute('aria-label', 'Ajouter une scène');
+                this.toggleBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._toggleMenu(); } };
+            }
+            // no room selector when header hidden
+            this.roomSelector = null;
+            return;
+        }
+
+        // Default header rendering when title is shown
         let headerContent = '';
         if (this.fixedRoom) {
             headerContent = `
@@ -238,7 +391,13 @@ class SceneManagerCard extends HTMLElement {
         this.toggleIcon = this.shadowRoot.getElementById("toggleIcon");
         this.roomSelector = this.shadowRoot.getElementById("roomSelector");
 
-        if (this.toggleBtn) this.toggleBtn.addEventListener("click", () => this._toggleMenu());
+        if (this.toggleBtn) {
+            this.toggleBtn.onclick = () => this._toggleMenu();
+            this.toggleBtn.setAttribute('tabindex', '0');
+            this.toggleBtn.setAttribute('role', 'button');
+            this.toggleBtn.setAttribute('aria-label', 'Ajouter une scène');
+            this.toggleBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._toggleMenu(); } };
+        }
         if (this.roomSelector && this.areas.length > 0) this._populateRoomSelector();
     }
 
@@ -568,13 +727,54 @@ class SceneManagerCard extends HTMLElement {
             });
             this.content.appendChild(btn);
         });
+        // If header is hidden, ensure the toggle '+' is appended at the end of the scene list
+        try {
+            if (this.config && this.config.show_title === false) {
+                const btnStyle = (this.config && this.config.button_style) ? this.config.button_style : 'filled';
+                const btnShape = (this.config && this.config.button_shape) ? this.config.button_shape : 'rounded';
+                let toggle = this.shadowRoot.getElementById('toggleMenuBtn');
+                if (!toggle) {
+                    const toggleEl = document.createElement('div');
+                    toggleEl.className = `toggle-btn faux-scene-btn style-${btnStyle} shape-${btnShape}`;
+                    toggleEl.id = 'toggleMenuBtn';
+                    toggleEl.innerHTML = `<ha-icon icon="mdi:plus" id="toggleIcon"></ha-icon>`;
+                    toggleEl.style.width = this.btnWidth; toggleEl.style.height = this.btnHeight; toggleEl.style.minWidth = this.btnWidth;
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'scene-list-end-toggle';
+                    wrapper.appendChild(toggleEl);
+                    this.content.appendChild(wrapper);
+                    this.toggleBtn = toggleEl;
+                    this.toggleIcon = this.shadowRoot.getElementById('toggleIcon');
+                    // single click handler and keyboard support
+                    this.toggleBtn.onclick = () => this._toggleMenu();
+                    this.toggleBtn.setAttribute('tabindex', '0');
+                    this.toggleBtn.setAttribute('role', 'button');
+                    this.toggleBtn.setAttribute('aria-label', 'Ajouter une scène');
+                    this.toggleBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._toggleMenu(); } };
+                } else {
+                    const wrapper = toggle.parentElement; const list = this.shadowRoot.getElementById('sceneList');
+                    if (wrapper && list) list.appendChild(wrapper);
+                    // ensure classes and sizing match current config
+                    toggle.className = `toggle-btn faux-scene-btn style-${btnStyle} shape-${btnShape}`;
+                    toggle.style.width = this.btnWidth; toggle.style.height = this.btnHeight; toggle.style.minWidth = this.btnWidth;
+                    this.toggleBtn = toggle; this.toggleIcon = this.shadowRoot.getElementById('toggleIcon');
+                    // ensure single handler and keyboard support
+                    this.toggleBtn.onclick = () => this._toggleMenu();
+                    this.toggleBtn.setAttribute('tabindex', '0');
+                    this.toggleBtn.setAttribute('role', 'button');
+                    this.toggleBtn.setAttribute('aria-label', 'Ajouter une scène');
+                    this.toggleBtn.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._toggleMenu(); } };
+                }
+            }
+        } catch (e) { /* ignore preview placement errors */ }
     }
     getCardSize() { return 3; }
 }
 
 class SceneManagerEditor extends HTMLElement {
     setConfig(config) { this._config = config; this.render(); }
-    configChanged(newConfig) { const event = new Event("config-changed", { bubbles: true, composed: true }); event.detail = { config: newConfig }; this.dispatchEvent(event); }
+    // propagate config-changed to HA editor (native preview will update)
+    configChanged(newConfig) { this._config = newConfig; const event = new Event("config-changed", { bubbles: true, composed: true }); event.detail = { config: newConfig }; this.dispatchEvent(event); }
     render() {
         if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
         this.shadowRoot.innerHTML = `
@@ -585,6 +785,9 @@ class SceneManagerEditor extends HTMLElement {
         .row { display: flex; align-items: center; gap: 15px; margin-bottom: 12px; }
         .label { flex: 0 0 140px; font-weight: 500; color: var(--primary-text-color); }
         input, select { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid var(--divider-color, #ccc); background: var(--card-background-color); color: var(--primary-text-color); box-sizing: border-box; }
+        .color-preview { width: 20px; height: 20px; border: 1px solid var(--divider-color, #ccc); border-radius: 4px; margin-left: 10px; display: inline-block; cursor: pointer; }
+        .reset-btn { margin-left: 10px; padding: 5px 10px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .reset-btn:hover { background: #d32f2f; }
         ha-icon-picker { flex: 1; }
       </style>
       <div class="card-config">
@@ -592,6 +795,9 @@ class SceneManagerEditor extends HTMLElement {
             <h3>⚙️ Configuration</h3>
             <div class="row"><div class="label">Titre</div><input type="text" id="title" value="${this._config.title || ''}"></div>
             <div class="row"><div class="label">Icône Titre</div><ha-icon-picker id="icon" value="${this._config.icon || 'mdi:home-floor-1'}"></ha-icon-picker></div>
+            <div class="row"><div class="label">Afficher Titre</div><input type="checkbox" id="show_title" ${this._config.show_title === false ? '' : 'checked'}></div>
+            <div class="row"><div class="label">Style Titre</div><select id="title_style"><option value="normal" ${this._config.title_style === 'normal' ? 'selected' : ''}>Normal</option><option value="bold" ${this._config.title_style === 'bold' ? 'selected' : ''}>Gras</option><option value="uppercase" ${this._config.title_style === 'uppercase' ? 'selected' : ''}>MAJUSCULE</option><option value="uppercase_bold" ${this._config.title_style === 'uppercase_bold' ? 'selected' : ''}>MAJUSCULE + Gras</option></select></div>
+            <div class="row"><div class="label">Couleur icône</div><input type="color" id="title_icon_color" value="${this._config.title_icon_color || '#000000'}"><span class="color-preview" data-for="title_icon_color" style="background-color:${this._config.title_icon_color || '#000000'};"></span><button class="reset-btn" data-for="title_icon_color">Reset</button></div>
             <div class="row"><div class="label">Pièce Fixe</div><input type="text" id="room" value="${this._config.room || ''}" placeholder="Optionnel (ex: salon)"></div>
         </div>
         <div class="option-group">
@@ -599,22 +805,39 @@ class SceneManagerEditor extends HTMLElement {
             <div class="row"><div class="label">Style Bouton</div><select id="button_style"><option value="filled" ${this._config.button_style === 'filled' ? 'selected' : ''}>Plein (Filled)</option><option value="outline" ${this._config.button_style === 'outline' ? 'selected' : ''}>Contour (Outline)</option><option value="ghost" ${this._config.button_style === 'ghost' ? 'selected' : ''}>Transparent (Ghost)</option></select></div>
             <div class="row"><div class="label">Forme Bouton</div><select id="button_shape"><option value="rounded" ${this._config.button_shape === 'rounded' ? 'selected' : ''}>Arrondi</option><option value="box" ${this._config.button_shape === 'box' ? 'selected' : ''}>Carré</option><option value="circle" ${this._config.button_shape === 'circle' ? 'selected' : ''}>Rond</option></select></div>
             <div class="row"><div class="label">Alignement</div><select id="scene_alignment"><option value="left" ${this._config.scene_alignment === 'left' ? 'selected' : ''}>Gauche</option><option value="center" ${this._config.scene_alignment === 'center' ? 'selected' : ''}>Centre</option><option value="right" ${this._config.scene_alignment === 'right' ? 'selected' : ''}>Droite</option></select></div>
+            <div class="row"><div class="label">Fond Carte</div><select id="card_background_style"><option value="theme" ${this._config.card_background_style === 'theme' ? 'selected' : ''}>Theme</option><option value="transparent" ${this._config.card_background_style === 'transparent' ? 'selected' : ''}>Transparent</option><option value="custom" ${this._config.card_background_style === 'custom' ? 'selected' : ''}>Personnalisé</option></select></div>
+            <div class="row" id="card_bg_color_row" style="display: ${this._config.card_background_style === 'custom' ? 'flex' : 'none'}"><div class="label">Couleur fond</div><input type="color" id="card_background_color" value="${this._config.card_background_color || '#ffffff'}"><span class="color-preview" data-for="card_background_color" style="background-color:${this._config.card_background_color || '#ffffff'};"></span><button class="reset-btn" data-for="card_background_color">Reset</button></div>
+            <div class="row"><div class="label">Fond Menu +</div><select id="menu_background_style"><option value="theme" ${this._config.menu_background_style === 'theme' ? 'selected' : ''}>Theme</option><option value="transparent" ${this._config.menu_background_style === 'transparent' ? 'selected' : ''}>Transparent</option><option value="custom" ${this._config.menu_background_style === 'custom' ? 'selected' : ''}>Personnalisé</option></select></div>
+            <div class="row" id="menu_bg_color_row" style="display: ${this._config.menu_background_style === 'custom' ? 'flex' : 'none'}"><div class="label">Couleur menu</div><input type="color" id="menu_background_color" value="${this._config.menu_background_color || '#ffffff'}"><span class="color-preview" data-for="menu_background_color" style="background-color:${this._config.menu_background_color || '#ffffff'};"></span><button class="reset-btn" data-for="menu_background_color">Reset</button></div>
+            <div class="row"><div class="label">Couleur bouton</div><input type="color" id="button_bg_color" value="${this._config.button_bg_color || '#eeeeee'}"><span class="color-preview" data-for="button_bg_color" style="background-color:${this._config.button_bg_color || '#eeeeee'};"></span><button class="reset-btn" data-for="button_bg_color">Reset</button></div>
+            <div class="row"><div class="label">Couleur icône</div><input type="color" id="button_icon_color" value="${this._config.button_icon_color || '#000000'}"><span class="color-preview" data-for="button_icon_color" style="background-color:${this._config.button_icon_color || '#000000'};"></span><button class="reset-btn" data-for="button_icon_color">Reset</button></div>
+            <div class="row"><div class="label">Couleur texte</div><input type="color" id="button_text_color" value="${this._config.button_text_color || '#000000'}"><span class="color-preview" data-for="button_text_color" style="background-color:${this._config.button_text_color || '#000000'};"></span><button class="reset-btn" data-for="button_text_color">Reset</button></div>
         </div>
         <div class="option-group">
             <h3>📐 Dimensions</h3>
             <div class="row"><div class="label">Largeur</div><input type="text" id="button_width" value="${this._config.button_width || '100px'}"></div>
             <div class="row"><div class="label">Hauteur</div><input type="text" id="button_height" value="${this._config.button_height || '80px'}"></div>
+                        <div class="row"><div class="label">Rayon boutons</div><input type="range" id="button_border_radius" min="0" max="40" value="${this._config.button_border_radius || 16}"></div>
+                        <div class="row"><div class="label">Ombre carte</div><select id="card_shadow"><option value="none" ${!this._config.card_shadow || this._config.card_shadow === 'none' ? 'selected' : ''}>Aucune</option><option value="light" ${this._config.card_shadow === 'light' ? 'selected' : ''}>Légère</option><option value="heavy" ${this._config.card_shadow === 'heavy' ? 'selected' : ''}>Forte</option></select></div>
+                        <div class="row"><div class="label">Rayon carte</div><input type="range" id="card_border_radius" min="0" max="32" value="${this._config.card_border_radius || 12}"></div>
+                        <div class="row"><div class="label">Espacement</div><input type="range" id="button_spacing" min="0" max="30" value="${this._config.button_spacing || 12}"></div>
         </div>
       </div>
     `;
-        this.shadowRoot.querySelectorAll("input, select").forEach(el => {
+        this.shadowRoot.querySelectorAll("input[type='color']").forEach(el => {
             el.addEventListener("change", (e) => {
                 const newConfig = { ...this._config };
                 newConfig[e.target.id] = e.target.value;
                 this.configChanged(newConfig);
+                // Update color preview
+                const preview = e.target.nextElementSibling;
+                if (preview && preview.classList.contains('color-preview')) {
+                    preview.style.backgroundColor = e.target.value;
+                }
             });
         });
 
+        // special handling for icon picker
         const iconPicker = this.shadowRoot.getElementById("icon");
         if (iconPicker) {
             iconPicker.addEventListener("value-changed", (e) => {
@@ -623,8 +846,82 @@ class SceneManagerEditor extends HTMLElement {
                 this.configChanged(newConfig);
             });
         }
-    }
-}
 
-customElements.define("scene-manager-card", SceneManagerCard);
+        // Toggle custom background color row
+        const bgStyle = this.shadowRoot.getElementById('card_background_style');
+        const bgColorRow = this.shadowRoot.getElementById('card_bg_color_row');
+        if (bgStyle && bgColorRow) {
+            bgStyle.addEventListener('change', (e) => {
+                bgColorRow.style.display = e.target.value === 'custom' ? 'flex' : 'none';
+                const newConfig = { ...this._config };
+                newConfig.card_background_style = e.target.value;
+                this.configChanged(newConfig);
+            });
+        }
+
+        // Toggle custom menu background color row
+        const menuStyleEl = this.shadowRoot.getElementById('menu_background_style');
+        const menuColorRow = this.shadowRoot.getElementById('menu_bg_color_row');
+        if (menuStyleEl && menuColorRow) {
+            menuStyleEl.addEventListener('change', (e) => {
+                menuColorRow.style.display = e.target.value === 'custom' ? 'flex' : 'none';
+                const newConfig = { ...this._config };
+                newConfig.menu_background_style = e.target.value;
+                this.configChanged(newConfig);
+            });
+        }
+
+        // Additional controls: shadows, radiuses, spacing
+        const cardShadow = this.shadowRoot.getElementById('card_shadow');
+        const cardRadius = this.shadowRoot.getElementById('card_border_radius');
+        const btnRadius = this.shadowRoot.getElementById('button_border_radius');
+        const btnSpacing = this.shadowRoot.getElementById('button_spacing');
+        [cardShadow, cardRadius, btnRadius, btnSpacing].forEach(el => {
+            if (!el) return;
+            el.addEventListener('change', (e) => {
+                const newConfig = { ...this._config };
+                newConfig[e.target.id] = e.target.value;
+                this.configChanged(newConfig);
+            });
+        });
+
+        // Reset buttons
+        this.shadowRoot.querySelectorAll('.reset-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const targetId = e.target.dataset.for;
+                const input = this.shadowRoot.getElementById(targetId);
+                const preview = this.shadowRoot.querySelector(`.color-preview[data-for="${targetId}"]`);
+                let defaultValue = '';
+                if (targetId === 'title_icon_color') defaultValue = '#000000';
+                else if (targetId === 'card_background_color') defaultValue = '#ffffff';
+                else if (targetId === 'menu_background_color') defaultValue = '#ffffff';
+                else if (targetId === 'button_bg_color') defaultValue = '#eeeeee';
+                else if (targetId === 'button_icon_color') defaultValue = '#000000';
+                else if (targetId === 'button_text_color') defaultValue = '#000000';
+                input.value = defaultValue;
+                if (preview) preview.style.backgroundColor = defaultValue || '#000000';
+                const newConfig = { ...this._config };
+                newConfig[targetId] = defaultValue;
+                this.configChanged(newConfig);
+            });
+        });        // internal preview removed: rely on Home Assistant native preview
+        // color inputs emit change handled above
+
+        // Ensure selects, text inputs, ranges and checkboxes propagate changes to HA editor
+        const simpleInputs = this.shadowRoot.querySelectorAll("select, input[type='text'], input[type='range'], input[type='checkbox']");
+        simpleInputs.forEach(el => {
+            // avoid re-wiring color inputs and elements already handled above
+            if (el.type === 'color' || el.id === 'icon') return;
+            const eventType = el.tagName.toLowerCase() === 'select' || el.type === 'range' || el.type === 'checkbox' ? 'change' : 'input';
+            el.addEventListener(eventType, (e) => {
+                const newConfig = { ...this._config };
+                // normalize checkbox/range/text values
+                if (el.type === 'range') newConfig[el.id] = Number(e.target.value);
+                else if (el.type === 'checkbox') newConfig[el.id] = e.target.checked;
+                else newConfig[el.id] = e.target.value;
+                this.configChanged(newConfig);
+            });
+        });
+    }
+} customElements.define("scene-manager-card", SceneManagerCard);
 customElements.define("scene-manager-editor", SceneManagerEditor);
