@@ -35,7 +35,7 @@ const PRESET_ICONS = [
 
 class SceneManagerCard extends HTMLElement {
     static getConfigElement() { return document.createElement("scene-manager-editor"); }
-    static getStubConfig() { return { title: "Mes Scènes", icon: "mdi:home-floor-1", show_title: true, button_style: "filled", button_shape: "rounded", scene_alignment: "left", button_width: "100px", button_height: "80px", card_background_style: 'theme', card_background_color: '#ffffff', button_bg_color: '#eeeeee', button_icon_color: '#000000', button_text_color: '#000000', title_style: 'normal', title_icon_color: '#000000', menu_background_style: 'theme', menu_background_color: '#ffffff' }; }
+    static getStubConfig() { return { title: "Mes Scènes", icon: "mdi:home-floor-1", show_title: true, button_style: "filled", button_shape: "rounded", scene_alignment: "left", button_width: "100px", button_height: "80px", card_background_style: 'theme', card_background_color: '#ffffff', button_bg_color: '#eeeeee', button_icon_color: '#000000', button_text_color: '#000000', title_style: 'normal', title_icon_color: '#000000', menu_background_style: 'theme', menu_background_color: '#ffffff', manual_lights: false, manual_rooms: [], manual_zones: '' }; }
 
     set hass(hass) {
         this._hass = hass;
@@ -65,6 +65,10 @@ class SceneManagerCard extends HTMLElement {
     setConfig(config) {
         // Determine previous show_title value for header re-render decisions
         const prevShowTitle = this.config ? this.config.show_title : undefined;
+        const prevManualLights = this.config ? this.config.manual_lights : undefined;
+        const prevManualZones = this.config ? this.config.manual_zones : undefined;
+        const prevManualRoomsStr = this.config ? JSON.stringify(this.config.manual_rooms || null) : undefined;
+        const nextManualRoomsStr = JSON.stringify((config && config.manual_rooms) || null);
         // Avoid unnecessary updates if config hasn't changed
         if (this.config && JSON.stringify(this.config) === JSON.stringify(config)) return;
 
@@ -81,7 +85,17 @@ class SceneManagerCard extends HTMLElement {
             const list = this.shadowRoot.getElementById("sceneList");
             if (list) list.style.justifyContent = this.alignment;
 
-            if (oldFixed !== this.fixedRoom || this.lastTitle !== config.title || prevShowTitle !== config.show_title) {
+            // Apply manual zones/lights config (if enabled)
+            this._applyManualZonesConfig();
+
+            if (
+                oldFixed !== this.fixedRoom ||
+                this.lastTitle !== config.title ||
+                prevShowTitle !== config.show_title ||
+                prevManualLights !== config.manual_lights ||
+                prevManualZones !== config.manual_zones ||
+                prevManualRoomsStr !== nextManualRoomsStr
+            ) {
                 this._renderHeader();
                 this.lastTitle = config.title;
                 if (this.fixedRoom) {
@@ -421,6 +435,15 @@ class SceneManagerCard extends HTMLElement {
 
     async _fetchData() {
         try {
+            // Manual lights mode: zones and lights are provided by config, no auto-detection.
+            if (this._useManualLights()) {
+                this._applyManualZonesConfig();
+                if (this.roomSelector && this.areas.length > 0) this._populateRoomSelector();
+                this.shouldUpdate = true;
+                this._updateContent();
+                return;
+            }
+
             const areas = await this._hass.callWS({ type: 'config/area_registry/list' });
             this.areas = areas.sort((a, b) => a.name.localeCompare(b.name));
             const entities = await this._hass.callWS({ type: 'config/entity_registry/list' });
@@ -445,6 +468,91 @@ class SceneManagerCard extends HTMLElement {
     }
 
     _getStorageEntityId() { return `sensor.scene_manager_data_${this.currentRoom.replace(/[^a-z0-9_]/g, '_')}`; }
+
+    _useManualLights() {
+        return !!(this.config && this.config.manual_lights);
+    }
+
+    _parseManualZones(text) {
+        if (!text || typeof text !== 'string') return [];
+        const lines = text.split(/\r?\n/);
+        const zones = [];
+        for (const rawLine of lines) {
+            const line = (rawLine || '').trim();
+            if (!line) continue;
+            if (line.startsWith('#')) continue;
+            const parts = line.split('|').map(p => (p || '').trim());
+            const zoneIdRaw = (parts[0] || '').trim();
+            if (!zoneIdRaw) continue;
+            const zoneId = zoneIdRaw.toLowerCase();
+            let zoneName = zoneIdRaw;
+            let lightsPart = '';
+
+            if (parts.length >= 3) {
+                zoneName = parts[1] ? parts[1] : zoneIdRaw;
+                lightsPart = parts.slice(2).join('|');
+            } else if (parts.length === 2) {
+                // Support minimal form: zone_id|light.a,light.b OR zone_id|Nom Zone
+                if ((parts[1] || '').includes('light.') || (parts[1] || '').includes(',')) {
+                    zoneName = zoneIdRaw;
+                    lightsPart = parts[1] || '';
+                } else {
+                    zoneName = parts[1] || zoneIdRaw;
+                    lightsPart = '';
+                }
+            }
+
+            const lights = (lightsPart || '')
+                .split(/[\s,;]+/)
+                .map(s => (s || '').trim())
+                .filter(Boolean)
+                .filter(eid => eid.startsWith('light.'));
+
+            zones.push({ area_id: zoneId, name: zoneName, lights });
+        }
+        return zones;
+    }
+
+    _parseManualRooms(rooms) {
+        if (!Array.isArray(rooms)) return [];
+        const parsed = [];
+        for (const r of rooms) {
+            const idRaw = (r && typeof r.id === 'string') ? r.id.trim() : '';
+            if (!idRaw) continue;
+            const area_id = idRaw.toLowerCase();
+            const name = (r && typeof r.name === 'string' && r.name.trim()) ? r.name.trim() : idRaw;
+            const lightsArr = (r && Array.isArray(r.lights)) ? r.lights : [];
+            const lights = [...new Set(
+                lightsArr
+                    .map(eid => (typeof eid === 'string' ? eid.trim() : ''))
+                    .filter(Boolean)
+                    .filter(eid => eid.startsWith('light.'))
+            )];
+            parsed.push({ area_id, name, lights });
+        }
+        return parsed;
+    }
+
+    _applyManualZonesConfig() {
+        if (!this._hass) return;
+        if (!this._useManualLights()) return;
+
+        const roomsParsed = this._parseManualRooms(this.config && this.config.manual_rooms);
+        const zonesParsed = roomsParsed.length > 0 ? roomsParsed : this._parseManualZones(this.config.manual_zones || '');
+        this.areas = zonesParsed;
+
+        // Keep currentRoom consistent
+        if (this.fixedRoom) {
+            this.currentRoom = this.fixedRoom;
+        } else {
+            const lastRoom = localStorage.getItem('scene_manager_last_room');
+            if (lastRoom && zonesParsed.some(z => z.area_id === lastRoom.toLowerCase())) {
+                this.currentRoom = lastRoom;
+            } else if (!this.currentRoom || !zonesParsed.some(z => z.area_id === (this.currentRoom || '').toLowerCase())) {
+                this.currentRoom = zonesParsed.length > 0 ? zonesParsed[0].area_id : '';
+            }
+        }
+    }
 
     _checkServerUpdates() {
         if (!this.currentRoom) return;
@@ -476,21 +584,30 @@ class SceneManagerCard extends HTMLElement {
 
     _buildLightControls(entitiesInScene = null) {
         if (!this.isMenuOpen) return;
-        const allLights = Object.keys(this._hass.states).filter((eid) => eid.startsWith("light."));
-        const lightsByArea = {}; this.areas.forEach(a => lightsByArea[a.area_id] = []); const noAreaLights = [];
+        let lightsByArea = {};
+        let noAreaLights = [];
 
-        allLights.forEach(eid => {
-            let assigned = false; const entry = this.entitiesRegistry.find(e => e.entity_id === eid);
-            if (entry && entry.area_id && lightsByArea[entry.area_id]) { lightsByArea[entry.area_id].push(eid); assigned = true; }
-            if (!assigned) {
-                const stateObj = this._hass.states[eid];
-                const friendlyName = stateObj ? stateObj.attributes.friendly_name || "" : "";
-                for (const area of this.areas) {
-                    if (eid.toLowerCase().includes(area.area_id.toLowerCase()) || friendlyName.toLowerCase().includes(area.name.toLowerCase())) { lightsByArea[area.area_id].push(eid); assigned = true; break; }
+        if (this._useManualLights()) {
+            // Use configured lights per zone
+            this._applyManualZonesConfig();
+            this.areas.forEach(a => { lightsByArea[a.area_id] = Array.isArray(a.lights) ? a.lights : []; });
+        } else {
+            const allLights = Object.keys(this._hass.states).filter((eid) => eid.startsWith("light."));
+            lightsByArea = {}; this.areas.forEach(a => lightsByArea[a.area_id] = []); noAreaLights = [];
+
+            allLights.forEach(eid => {
+                let assigned = false; const entry = this.entitiesRegistry.find(e => e.entity_id === eid);
+                if (entry && entry.area_id && lightsByArea[entry.area_id]) { lightsByArea[entry.area_id].push(eid); assigned = true; }
+                if (!assigned) {
+                    const stateObj = this._hass.states[eid];
+                    const friendlyName = stateObj ? stateObj.attributes.friendly_name || "" : "";
+                    for (const area of this.areas) {
+                        if (eid.toLowerCase().includes(area.area_id.toLowerCase()) || friendlyName.toLowerCase().includes(area.name.toLowerCase())) { lightsByArea[area.area_id].push(eid); assigned = true; break; }
+                    }
                 }
-            }
-            if (!assigned) noAreaLights.push(eid);
-        });
+                if (!assigned) noAreaLights.push(eid);
+            });
+        }
 
         this.mainLightsContainer.innerHTML = "";
         const createSection = (areaName, areaId, lights, startOpen) => {
@@ -503,7 +620,9 @@ class SceneManagerCard extends HTMLElement {
             summary.appendChild(masterCheck); summary.appendChild(title); summary.appendChild(arrow); details.appendChild(summary);
             const container = document.createElement("div"); container.className = "room-content";
 
-            if (!lights || lights.length === 0) { container.innerHTML = `<div style="opacity:0.5; font-size:12px; font-style:italic; text-align:center;">Aucune lumière détectée</div>`; } else {
+            if (!lights || lights.length === 0) {
+                container.innerHTML = `<div style="opacity:0.5; font-size:12px; font-style:italic; text-align:center;">${this._useManualLights() ? 'Aucune lumière configurée' : 'Aucune lumière détectée'}</div>`;
+            } else {
                 lights.sort();
                 lights.forEach(eid => {
                     const row = document.createElement("div"); row.className = "light-row"; row.dataset.entityId = eid;
@@ -532,7 +651,7 @@ class SceneManagerCard extends HTMLElement {
             }
         });
 
-        if (noAreaLights.length > 0) { createSection("Autres / Non Assignées", "unknown", noAreaLights, false); }
+        if (!this._useManualLights() && noAreaLights.length > 0) { createSection("Autres / Non Assignées", "unknown", noAreaLights, false); }
 
         if (entitiesInScene) { this.shadowRoot.querySelectorAll(".light-select").forEach(cb => { if (entitiesInScene.includes(cb.dataset.entity)) cb.checked = true; }); }
         this._updateLightStates(true);
@@ -549,7 +668,7 @@ class SceneManagerCard extends HTMLElement {
             row.querySelector(".light-name").innerText = name; row.querySelector(".light-name").title = name;
             const slider = row.querySelector(".brightness-slider"); slider.value = isOn ? brightness : 0; slider.disabled = !isDim && stateObj.attributes.brightness === undefined; if (slider.disabled) slider.style.opacity = 0.3; else slider.style.opacity = 1;
             const toggle = row.querySelector(".light-toggle"); if (isOn) toggle.classList.add("on"); else toggle.classList.remove("on");
-            if (firstRun && !this.editingId) { if (eid.includes(this.currentRoom) && isOn) { const cb = row.querySelector(".light-select"); cb.checked = true; cb.dispatchEvent(new Event("change")); } }
+            if (firstRun && !this.editingId && !this._useManualLights()) { if (eid.includes(this.currentRoom) && isOn) { const cb = row.querySelector(".light-select"); cb.checked = true; cb.dispatchEvent(new Event("change")); } }
         });
         this.shadowRoot.querySelectorAll("details").forEach(detail => { const master = detail.querySelector(".room-checkbox"); const all = detail.querySelectorAll(".light-select"); const checked = detail.querySelectorAll(".light-select:checked"); if (all.length > 0) { master.checked = checked.length > 0; master.indeterminate = checked.length > 0 && checked.length < all.length; } });
     }
@@ -772,19 +891,123 @@ class SceneManagerCard extends HTMLElement {
 }
 
 class SceneManagerEditor extends HTMLElement {
+    set hass(hass) {
+        this._hass = hass;
+        if (!this.shadowRoot) return;
+        this.shadowRoot.querySelectorAll('ha-entity-picker').forEach(p => { p.hass = hass; });
+    }
     setConfig(config) { this._config = config; this.render(); }
     // propagate config-changed to HA editor (native preview will update)
     configChanged(newConfig) { this._config = newConfig; const event = new Event("config-changed", { bubbles: true, composed: true }); event.detail = { config: newConfig }; this.dispatchEvent(event); }
+
+    _getManualRooms() {
+        const rooms = (this._config && Array.isArray(this._config.manual_rooms)) ? this._config.manual_rooms : [];
+        return rooms.map(r => ({
+            id: (r && typeof r.id === 'string') ? r.id : '',
+            name: (r && typeof r.name === 'string') ? r.name : '',
+            lights: (r && Array.isArray(r.lights)) ? r.lights.filter(eid => typeof eid === 'string') : []
+        }));
+    }
+
+    _setManualRooms(rooms) {
+        const newConfig = { ...this._config, manual_rooms: rooms };
+        this.configChanged(newConfig);
+    }
+
+    _addRoom() {
+        const rooms = this._getManualRooms();
+        rooms.push({ id: '', name: '', lights: [] });
+        this._setManualRooms(rooms);
+    }
+
+    _removeRoom(roomIndex) {
+        const rooms = this._getManualRooms();
+        rooms.splice(roomIndex, 1);
+        this._setManualRooms(rooms);
+    }
+
+    _updateRoom(roomIndex, patch) {
+        const rooms = this._getManualRooms();
+        const existing = rooms[roomIndex] || { id: '', name: '', lights: [] };
+        rooms[roomIndex] = { ...existing, ...patch };
+        this._setManualRooms(rooms);
+    }
+
+    _addLight(roomIndex) {
+        const rooms = this._getManualRooms();
+        const room = rooms[roomIndex] || { id: '', name: '', lights: [] };
+        room.lights = Array.isArray(room.lights) ? [...room.lights, ''] : [''];
+        rooms[roomIndex] = room;
+        this._setManualRooms(rooms);
+    }
+
+    _removeLight(roomIndex, lightIndex) {
+        const rooms = this._getManualRooms();
+        const room = rooms[roomIndex];
+        if (!room || !Array.isArray(room.lights)) return;
+        room.lights = room.lights.filter((_, idx) => idx !== lightIndex);
+        rooms[roomIndex] = room;
+        this._setManualRooms(rooms);
+    }
+
+    _updateLight(roomIndex, lightIndex, entityId) {
+        const rooms = this._getManualRooms();
+        const room = rooms[roomIndex] || { id: '', name: '', lights: [] };
+        const lights = Array.isArray(room.lights) ? [...room.lights] : [];
+        lights[lightIndex] = entityId || '';
+        room.lights = lights;
+        rooms[roomIndex] = room;
+        this._setManualRooms(rooms);
+    }
     render() {
         if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
+
+        const rooms = this._getManualRooms();
+        const roomsHtml = rooms.map((room, ri) => {
+            const lights = Array.isArray(room.lights) ? room.lights : [];
+            const lightsHtml = lights.map((eid, li) => `
+                            <div class="row light-row">
+                                <div class="label">Lumière</div>
+                                <ha-entity-picker class="light-picker" data-room-index="${ri}" data-light-index="${li}" value="${(eid || '').replace(/\"/g, '&quot;')}"></ha-entity-picker>
+                                <button class="small-btn danger" type="button" data-action="remove-light" data-room-index="${ri}" data-light-index="${li}">Supprimer</button>
+                            </div>
+                        `).join('');
+
+            return `
+                            <div class="room-block">
+                                <div class="row">
+                                    <div class="label">Id pièce</div>
+                                    <input type="text" class="room-input" data-room-index="${ri}" data-field="id" value="${(room.id || '').replace(/\"/g, '&quot;')}" placeholder="ex: salon">
+                                    <button class="small-btn danger" type="button" data-action="remove-room" data-room-index="${ri}">Supprimer pièce</button>
+                                </div>
+                                <div class="row">
+                                    <div class="label">Nom</div>
+                                    <input type="text" class="room-input" data-room-index="${ri}" data-field="name" value="${(room.name || '').replace(/\"/g, '&quot;')}" placeholder="ex: Salon">
+                                </div>
+                                ${lightsHtml}
+                                <div class="row">
+                                    <div class="label"></div>
+                                    <button class="small-btn" type="button" data-action="add-light" data-room-index="${ri}">+ Ajouter une lumière</button>
+                                </div>
+                            </div>
+                        `;
+        }).join('');
         this.shadowRoot.innerHTML = `
       <style>
         .card-config { display: flex; flex-direction: column; gap: 20px; padding: 10px; }
         .option-group { border: 1px solid var(--divider-color, #ccc); border-radius: 8px; padding: 16px; }
         h3 { margin-top: 0; margin-bottom: 16px; border-bottom: 1px solid var(--divider-color, #ccc); padding-bottom: 8px; color: var(--primary-text-color); }
-        .row { display: flex; align-items: center; gap: 15px; margin-bottom: 12px; }
+        .row { display: flex; align-items: center; gap: 15px; margin-bottom: 12px; flex-wrap: wrap; }
         .label { flex: 0 0 140px; font-weight: 500; color: var(--primary-text-color); }
-        input, select { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid var(--divider-color, #ccc); background: var(--card-background-color); color: var(--primary-text-color); box-sizing: border-box; }
+                input, select, textarea { flex: 1; padding: 10px; border-radius: 4px; border: 1px solid var(--divider-color, #ccc); background: var(--card-background-color); color: var(--primary-text-color); box-sizing: border-box; }
+                textarea { min-height: 110px; resize: vertical; font-family: var(--paper-font-body1_-_font-family); }
+                .room-block { border: 1px dashed var(--divider-color, #ccc); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+            .room-block .label { flex: 1 1 100%; }
+            input, select, textarea, ha-entity-picker { min-width: 220px; }
+            .light-row ha-entity-picker { flex: 1; }
+            .small-btn { padding: 4px 8px; border-radius: 6px; border: 1px solid var(--divider-color, #ccc); background: var(--card-background-color); color: var(--primary-text-color); cursor: pointer; font-size: 12px; line-height: 1.2; flex: 0 0 auto; white-space: nowrap; min-height: 32px; }
+                .small-btn:hover { filter: brightness(0.98); }
+                .small-btn.danger { border-color: var(--error-color, #f44336); color: var(--error-color, #f44336); }
         .color-preview { width: 20px; height: 20px; border: 1px solid var(--divider-color, #ccc); border-radius: 4px; margin-left: 10px; display: inline-block; cursor: pointer; }
         .reset-btn { margin-left: 10px; padding: 5px 10px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
         .reset-btn:hover { background: #d32f2f; }
@@ -799,6 +1022,14 @@ class SceneManagerEditor extends HTMLElement {
             <div class="row"><div class="label">Style Titre</div><select id="title_style"><option value="normal" ${this._config.title_style === 'normal' ? 'selected' : ''}>Normal</option><option value="bold" ${this._config.title_style === 'bold' ? 'selected' : ''}>Gras</option><option value="uppercase" ${this._config.title_style === 'uppercase' ? 'selected' : ''}>MAJUSCULE</option><option value="uppercase_bold" ${this._config.title_style === 'uppercase_bold' ? 'selected' : ''}>MAJUSCULE + Gras</option></select></div>
             <div class="row"><div class="label">Couleur icône</div><input type="color" id="title_icon_color" value="${this._config.title_icon_color || '#000000'}"><span class="color-preview" data-for="title_icon_color" style="background-color:${this._config.title_icon_color || '#000000'};"></span><button class="reset-btn" data-for="title_icon_color">Reset</button></div>
             <div class="row"><div class="label">Pièce Fixe</div><input type="text" id="room" value="${this._config.room || ''}" placeholder="Optionnel (ex: salon)"></div>
+        </div>
+        <div class="option-group">
+            <h3>💡 Lumières</h3>
+            <div class="row"><div class="label">Mode Manuel</div><input type="checkbox" id="manual_lights" ${this._config.manual_lights ? 'checked' : ''}></div>
+                        <div id="manual_rooms_container" style="display:${this._config.manual_lights ? 'block' : 'none'}">
+                            ${roomsHtml || '<div class="row"><div class="label"></div><div style="flex:1;color:var(--secondary-text-color);">Aucune pièce configurée.</div></div>'}
+                            <div class="row"><div class="label"></div><button class="small-btn" type="button" data-action="add-room">+ Ajouter une pièce</button></div>
+                        </div>
         </div>
         <div class="option-group">
             <h3>🎨 Apparence</h3>
@@ -908,10 +1139,11 @@ class SceneManagerEditor extends HTMLElement {
         // color inputs emit change handled above
 
         // Ensure selects, text inputs, ranges and checkboxes propagate changes to HA editor
-        const simpleInputs = this.shadowRoot.querySelectorAll("select, input[type='text'], input[type='range'], input[type='checkbox']");
+        const simpleInputs = this.shadowRoot.querySelectorAll("select, textarea, input[type='text'], input[type='range'], input[type='checkbox']");
         simpleInputs.forEach(el => {
             // avoid re-wiring color inputs and elements already handled above
             if (el.type === 'color' || el.id === 'icon') return;
+            if (!el.id) return;
             const eventType = el.tagName.toLowerCase() === 'select' || el.type === 'range' || el.type === 'checkbox' ? 'change' : 'input';
             el.addEventListener(eventType, (e) => {
                 const newConfig = { ...this._config };
@@ -920,6 +1152,48 @@ class SceneManagerEditor extends HTMLElement {
                 else if (el.type === 'checkbox') newConfig[el.id] = e.target.checked;
                 else newConfig[el.id] = e.target.value;
                 this.configChanged(newConfig);
+            });
+        });
+
+        // Manual rooms: inputs
+        this.shadowRoot.querySelectorAll('input.room-input[data-room-index][data-field]').forEach(input => {
+            // Commit only on change (blur) to avoid rerender/focus loss on each keystroke
+            input.addEventListener('change', (e) => {
+                const roomIndex = Number(e.target.dataset.roomIndex);
+                const field = e.target.dataset.field;
+                if (Number.isNaN(roomIndex) || !field) return;
+                this._updateRoom(roomIndex, { [field]: e.target.value });
+            });
+            input.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                e.currentTarget.blur();
+            });
+        });
+
+        // Manual rooms: entity pickers
+        this.shadowRoot.querySelectorAll('ha-entity-picker.light-picker').forEach(picker => {
+            if (this._hass) picker.hass = this._hass;
+            try { picker.includeDomains = ['light']; } catch (e) { /* ignore */ }
+            picker.addEventListener('value-changed', (e) => {
+                const roomIndex = Number(picker.dataset.roomIndex);
+                const lightIndex = Number(picker.dataset.lightIndex);
+                const value = (e && e.detail) ? e.detail.value : picker.value;
+                if (Number.isNaN(roomIndex) || Number.isNaN(lightIndex)) return;
+                this._updateLight(roomIndex, lightIndex, value);
+            });
+        });
+
+        // Manual rooms: buttons
+        this.shadowRoot.querySelectorAll('button[data-action]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const action = e.currentTarget.dataset.action;
+                const roomIndex = Number(e.currentTarget.dataset.roomIndex);
+                const lightIndex = Number(e.currentTarget.dataset.lightIndex);
+                if (action === 'add-room') return this._addRoom();
+                if (action === 'remove-room') return this._removeRoom(roomIndex);
+                if (action === 'add-light') return this._addLight(roomIndex);
+                if (action === 'remove-light') return this._removeLight(roomIndex, lightIndex);
             });
         });
     }
