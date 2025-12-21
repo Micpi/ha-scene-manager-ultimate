@@ -239,7 +239,7 @@ class SceneManagerCard extends HTMLElement {
         // Apply appearance variables initially
         this._applyAppearance();
 
-        this.saveBtn.addEventListener("click", () => this._saveScene());
+        this.saveBtn.addEventListener("click", () => this._saveScene(), { passive: true });
     }
 
     _createFakeButtons() {
@@ -623,7 +623,7 @@ class SceneManagerCard extends HTMLElement {
             if (!lights || lights.length === 0) {
                 container.innerHTML = `<div style="opacity:0.5; font-size:12px; font-style:italic; text-align:center;">${this._useManualLights() ? 'Aucune lumière configurée' : 'Aucune lumière détectée'}</div>`;
             } else {
-                lights.sort();
+                if (!this._useManualLights()) lights.sort();
                 lights.forEach(eid => {
                     const row = document.createElement("div"); row.className = "light-row"; row.dataset.entityId = eid;
                     row.innerHTML = `<input type="checkbox" class="light-select" data-entity="${eid}"><div class="light-name">...</div><input type="range" min="0" max="100" class="brightness-slider"><div class="light-toggle"><ha-icon icon="mdi:power"></ha-icon></div>`;
@@ -891,6 +891,27 @@ class SceneManagerCard extends HTMLElement {
 }
 
 class SceneManagerEditor extends HTMLElement {
+    constructor() {
+        super();
+        this._pickerWaitUntil = 0;
+        this._pickerWaitTimer = null;
+        this._pickerWaitDone = false;
+
+        // Watch for ha-entity-picker availability to trigger re-render when it loads
+        if (window.customElements && !customElements.get('ha-entity-picker')) {
+            customElements.whenDefined('ha-entity-picker').then(() => {
+                this.render();
+            });
+        }
+    }
+
+    disconnectedCallback() {
+        if (this._pickerWaitTimer) {
+            clearTimeout(this._pickerWaitTimer);
+            this._pickerWaitTimer = null;
+        }
+    }
+
     set hass(hass) {
         this._hass = hass;
         if (!this.shadowRoot) return;
@@ -959,17 +980,205 @@ class SceneManagerEditor extends HTMLElement {
         rooms[roomIndex] = room;
         this._setManualRooms(rooms);
     }
+
+    _moveLightUp(roomIndex, lightIndex) {
+        if (lightIndex <= 0) return;
+        const rooms = this._getManualRooms();
+        const room = rooms[roomIndex];
+        if (!room || !Array.isArray(room.lights)) return;
+        const lights = [...room.lights];
+        [lights[lightIndex - 1], lights[lightIndex]] = [lights[lightIndex], lights[lightIndex - 1]];
+        room.lights = lights;
+        rooms[roomIndex] = room;
+        this._setManualRooms(rooms);
+    }
+
+    _moveLightDown(roomIndex, lightIndex) {
+        const rooms = this._getManualRooms();
+        const room = rooms[roomIndex];
+        if (!room || !Array.isArray(room.lights)) return;
+        if (lightIndex >= room.lights.length - 1) return;
+        const lights = [...room.lights];
+        [lights[lightIndex], lights[lightIndex + 1]] = [lights[lightIndex + 1], lights[lightIndex]];
+        room.lights = lights;
+        rooms[roomIndex] = room;
+        this._setManualRooms(rooms);
+    }
+
+    _dragStart(e) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', JSON.stringify({
+            roomIndex: e.target.dataset.roomIndex,
+            lightIndex: e.target.dataset.lightIndex
+        }));
+        e.target.classList.add('dragging');
+    }
+
+    _dragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const row = e.target.closest('.light-row');
+        if (row) row.classList.add('over');
+    }
+
+    _dragLeave(e) {
+        const row = e.target.closest('.light-row');
+        if (row) row.classList.remove('over');
+    }
+
+    _dragEnd(e) {
+        this.shadowRoot.querySelectorAll('.light-row').forEach(row => {
+            row.classList.remove('dragging');
+            row.classList.remove('over');
+        });
+    }
+
+    _drop(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        const targetRow = e.target.closest('.light-row');
+        if (!targetRow) return;
+
+        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        const srcRoomIndex = Number(data.roomIndex);
+        const srcLightIndex = Number(data.lightIndex);
+
+        const targetRoomIndex = Number(targetRow.dataset.roomIndex);
+        const targetLightIndex = Number(targetRow.dataset.lightIndex);
+
+        if (srcRoomIndex !== targetRoomIndex) return; // Only reorder within same room
+        if (srcLightIndex === targetLightIndex) return;
+
+        this._reorderLights(srcRoomIndex, srcLightIndex, targetLightIndex);
+    }
+
+    _reorderLights(roomIndex, oldIndex, newIndex) {
+        const rooms = this._getManualRooms();
+        const room = rooms[roomIndex];
+        if (!room || !room.lights) return;
+
+        const lights = [...room.lights];
+        const [movedLight] = lights.splice(oldIndex, 1);
+        lights.splice(newIndex, 0, movedLight);
+
+        room.lights = lights;
+        rooms[roomIndex] = room;
+        this._setManualRooms(rooms);
+    }
+
+    _captureFocusState() {
+        if (!this.shadowRoot) return null;
+        const active = this.shadowRoot.activeElement;
+        if (!active) return null;
+
+        const tag = (active.tagName || '').toLowerCase();
+        const state = {
+            kind: null,
+            id: active.id || null,
+            roomIndex: active.dataset ? active.dataset.roomIndex : null,
+            lightIndex: active.dataset ? active.dataset.lightIndex : null,
+            field: active.dataset ? active.dataset.field : null,
+            selectionStart: null,
+            selectionEnd: null
+        };
+
+        if (state.id) state.kind = 'id';
+        else if (active.classList && active.classList.contains('room-input')) state.kind = 'room-input';
+        else if (active.classList && active.classList.contains('light-input')) state.kind = 'light-input';
+        else if (active.classList && active.classList.contains('light-select')) state.kind = 'light-select';
+        else return null;
+
+        if ((tag === 'input' || tag === 'textarea') && typeof active.selectionStart === 'number') {
+            state.selectionStart = active.selectionStart;
+            state.selectionEnd = active.selectionEnd;
+        }
+        return state;
+    }
+
+    _restoreFocusState(state) {
+        if (!state || !this.shadowRoot) return;
+        let el = null;
+        if (state.kind === 'id' && state.id) {
+            el = this.shadowRoot.getElementById(state.id);
+        } else if (state.kind === 'room-input') {
+            el = this.shadowRoot.querySelector(
+                `input.room-input[data-room-index="${state.roomIndex}"][data-field="${state.field}"]`
+            );
+        } else if (state.kind === 'light-input') {
+            el = this.shadowRoot.querySelector(
+                `input.light-input[data-room-index="${state.roomIndex}"][data-light-index="${state.lightIndex}"]`
+            );
+        } else if (state.kind === 'light-select') {
+            el = this.shadowRoot.querySelector(
+                `select.light-select[data-room-index="${state.roomIndex}"][data-light-index="${state.lightIndex}"]`
+            );
+        }
+
+        if (!el) return;
+        try {
+            el.focus({ preventScroll: true });
+            if (typeof state.selectionStart === 'number' && typeof el.setSelectionRange === 'function') {
+                el.setSelectionRange(state.selectionStart, state.selectionEnd ?? state.selectionStart);
+            }
+        } catch (e) {
+            // ignore focus errors
+        }
+    }
     render() {
         if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
+
+        const focusState = this._captureFocusState();
+        const pickerDefined = !!(window.customElements && window.customElements.get && window.customElements.get('ha-entity-picker'));
+
+        // Give HA a moment to register/upgrade ha-entity-picker before falling back.
+        const now = Date.now();
+        const WAIT_MS = 1200;
+        const POLL_MS = 150;
+
+        if (pickerDefined) {
+            this._pickerWaitUntil = 0;
+            this._pickerWaitDone = false;
+            if (this._pickerWaitTimer) {
+                clearTimeout(this._pickerWaitTimer);
+                this._pickerWaitTimer = null;
+            }
+        } else if (!this._pickerWaitDone) {
+            if (!this._pickerWaitUntil) this._pickerWaitUntil = now + WAIT_MS;
+
+            if (now < this._pickerWaitUntil) {
+                if (!this._pickerWaitTimer) {
+                    this._pickerWaitTimer = setTimeout(() => {
+                        this._pickerWaitTimer = null;
+                        this.render();
+                    }, POLL_MS);
+                }
+            } else {
+                this._pickerWaitUntil = 0;
+                this._pickerWaitDone = true;
+            }
+        }
+
+        const useEntityPicker = pickerDefined || (!this._pickerWaitDone && now < this._pickerWaitUntil);
+
+        const hassLights = (this._hass && this._hass.states)
+            ? Object.keys(this._hass.states)
+                .filter(eid => typeof eid === 'string' && eid.startsWith('light.'))
+                .map(eid => {
+                    const st = this._hass.states[eid];
+                    const name = (st && st.attributes && st.attributes.friendly_name) ? String(st.attributes.friendly_name) : eid;
+                    return { eid, name };
+                })
+                .sort((a, b) => (a.name || a.eid).localeCompare((b.name || b.eid), undefined, { sensitivity: 'base' }))
+            : null;
 
         const rooms = this._getManualRooms();
         const roomsHtml = rooms.map((room, ri) => {
             const lights = Array.isArray(room.lights) ? room.lights : [];
             const lightsHtml = lights.map((eid, li) => `
-                            <div class="row light-row">
-                                <div class="label">Lumière</div>
-                                <ha-entity-picker class="light-picker" data-room-index="${ri}" data-light-index="${li}" value="${(eid || '').replace(/\"/g, '&quot;')}"></ha-entity-picker>
-                                <button class="small-btn danger" type="button" data-action="remove-light" data-room-index="${ri}" data-light-index="${li}">Supprimer</button>
+                            <div class="row light-row" draggable="true" data-room-index="${ri}" data-light-index="${li}">
+                                <div class="drag-handle"><ha-icon icon="mdi:drag"></ha-icon></div>
+                                <div class="light-picker-container" data-room-index="${ri}" data-light-index="${li}" data-value="${(eid || '').replace(/\"/g, '&quot;')}"></div>
+                                <button class="small-btn danger" type="button" data-action="remove-light" data-room-index="${ri}" data-light-index="${li}">X</button>
                             </div>
                         `).join('');
 
@@ -1004,14 +1213,20 @@ class SceneManagerEditor extends HTMLElement {
                 .room-block { border: 1px dashed var(--divider-color, #ccc); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
             .room-block .label { flex: 1 1 100%; }
             input, select, textarea, ha-entity-picker { min-width: 220px; }
-            .light-row ha-entity-picker { flex: 1; }
+            .light-row ha-entity-picker, .light-row .light-input, .light-row .light-select { flex: 1; min-height: 40px; }
+            .light-row .light-picker-container { width: 280px; min-height: 40px; flex: none; }
             .small-btn { padding: 4px 8px; border-radius: 6px; border: 1px solid var(--divider-color, #ccc); background: var(--card-background-color); color: var(--primary-text-color); cursor: pointer; font-size: 12px; line-height: 1.2; flex: 0 0 auto; white-space: nowrap; min-height: 32px; }
-                .small-btn:hover { filter: brightness(0.98); }
+                .small-btn:hover:not(:disabled) { filter: brightness(0.98); }
+                .small-btn:disabled { opacity: 0.5; cursor: not-allowed; }
                 .small-btn.danger { border-color: var(--error-color, #f44336); color: var(--error-color, #f44336); }
         .color-preview { width: 20px; height: 20px; border: 1px solid var(--divider-color, #ccc); border-radius: 4px; margin-left: 10px; display: inline-block; cursor: pointer; }
         .reset-btn { margin-left: 10px; padding: 5px 10px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
         .reset-btn:hover { background: #d32f2f; }
         ha-icon-picker { flex: 1; }
+        .light-row { cursor: move; transition: all 0.2s ease; border: 1px solid transparent; border-radius: 4px; }
+        .light-row.dragging { opacity: 0.5; background: rgba(var(--rgb-primary-color), 0.1); }
+        .light-row.over { border-top: 2px solid var(--primary-color); }
+        .drag-handle { cursor: grab; padding: 0 8px; display: flex; align-items: center; color: var(--secondary-text-color); }
       </style>
       <div class="card-config">
         <div class="option-group">
@@ -1152,7 +1367,12 @@ class SceneManagerEditor extends HTMLElement {
                 else if (el.type === 'checkbox') newConfig[el.id] = e.target.checked;
                 else newConfig[el.id] = e.target.value;
                 this.configChanged(newConfig);
-            });
+
+                // Special handling: re-render when manual_lights checkbox changes (to create/destroy pickers)
+                if (el.id === 'manual_lights') {
+                    setTimeout(() => this.render(), 100);
+                }
+            }, { passive: true });
         });
 
         // Manual rooms: inputs
@@ -1163,25 +1383,79 @@ class SceneManagerEditor extends HTMLElement {
                 const field = e.target.dataset.field;
                 if (Number.isNaN(roomIndex) || !field) return;
                 this._updateRoom(roomIndex, { [field]: e.target.value });
-            });
+            }, { passive: true });
             input.addEventListener('keydown', (e) => {
                 if (e.key !== 'Enter') return;
                 e.preventDefault();
                 e.currentTarget.blur();
-            });
+            }, { passive: false });
         });
 
         // Manual rooms: entity pickers
         this.shadowRoot.querySelectorAll('ha-entity-picker.light-picker').forEach(picker => {
             if (this._hass) picker.hass = this._hass;
-            try { picker.includeDomains = ['light']; } catch (e) { /* ignore */ }
             picker.addEventListener('value-changed', (e) => {
                 const roomIndex = Number(picker.dataset.roomIndex);
                 const lightIndex = Number(picker.dataset.lightIndex);
                 const value = (e && e.detail) ? e.detail.value : picker.value;
                 if (Number.isNaN(roomIndex) || Number.isNaN(lightIndex)) return;
                 this._updateLight(roomIndex, lightIndex, value);
+            }, { passive: true });
+        });
+
+        // Create entity pickers dynamically in containers (defer to next microtask for DOM stability)
+        Promise.resolve().then(() => {
+            const containers = this.shadowRoot.querySelectorAll('.light-picker-container');
+
+            containers.forEach((container, idx) => {
+                // Clear any existing content
+                container.innerHTML = '';
+
+                const roomIndex = Number(container.dataset.roomIndex);
+                const lightIndex = Number(container.dataset.lightIndex);
+                const value = container.dataset.value || '';
+
+                // Check if hass is available
+                if (!this._hass) {
+                    container.innerHTML = '<div style="color: red; font-size: 12px;">Hass non disponible</div>';
+                    return;
+                }
+
+                // Use ha-selector (modern standard) instead of direct ha-entity-picker
+                const selector = document.createElement('ha-selector');
+
+                selector.hass = this._hass;
+                selector.selector = { entity: { domain: "light" } };
+                selector.value = value;
+                selector.label = "";
+
+                // Force styles
+                selector.style.display = 'block';
+                selector.style.width = '100%';
+
+                selector.addEventListener('value-changed', (e) => {
+                    e.stopPropagation();
+                    const newValue = (e && e.detail) ? e.detail.value : selector.value;
+                    if (!Number.isNaN(roomIndex) && !Number.isNaN(lightIndex)) {
+                        this._updateLight(roomIndex, lightIndex, newValue);
+                    }
+                }, { passive: true });
+
+                container.appendChild(selector);
             });
+        });        // Manual rooms: fallback text inputs
+        this.shadowRoot.querySelectorAll('input.light-input[data-room-index][data-light-index]').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const roomIndex = Number(e.target.dataset.roomIndex);
+                const lightIndex = Number(e.target.dataset.lightIndex);
+                if (Number.isNaN(roomIndex) || Number.isNaN(lightIndex)) return;
+                this._updateLight(roomIndex, lightIndex, e.target.value);
+            }, { passive: true });
+            input.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                e.currentTarget.blur();
+            }, { passive: false });
         });
 
         // Manual rooms: buttons
@@ -1194,8 +1468,20 @@ class SceneManagerEditor extends HTMLElement {
                 if (action === 'remove-room') return this._removeRoom(roomIndex);
                 if (action === 'add-light') return this._addLight(roomIndex);
                 if (action === 'remove-light') return this._removeLight(roomIndex, lightIndex);
-            });
+            }, { passive: true });
         });
+
+        // Manual rooms: drag and drop
+        this.shadowRoot.querySelectorAll('.light-row').forEach(row => {
+            row.addEventListener('dragstart', this._dragStart.bind(this));
+            row.addEventListener('dragover', this._dragOver.bind(this));
+            row.addEventListener('dragleave', this._dragLeave.bind(this));
+            row.addEventListener('drop', this._drop.bind(this));
+            row.addEventListener('dragend', this._dragEnd.bind(this));
+        });
+
+        // Restore focus/cursor after re-render (prevents losing focus on each keystroke)
+        this._restoreFocusState(focusState);
     }
 } customElements.define("scene-manager-card", SceneManagerCard);
 customElements.define("scene-manager-editor", SceneManagerEditor);
