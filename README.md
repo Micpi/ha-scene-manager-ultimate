@@ -2,7 +2,7 @@
 
 Scene Manager Ultimate est une integration Home Assistant qui permet de creer, restaurer, organiser et declencher des scenes depuis une carte Lovelace embarquee.
 
-![Version](https://img.shields.io/badge/version-1.0.16-blue)
+![Version](https://img.shields.io/badge/version-1.0.17-blue)
 ![Maintenance](https://img.shields.io/badge/maintainer-Micpi-green)
 ![HACS](https://img.shields.io/badge/HACS-Custom%20Integration-orange)
 
@@ -27,14 +27,14 @@ Scene Manager Ultimate est une integration Home Assistant qui permet de creer, r
 La carte est servie par l'integration a cette URL :
 
 ```text
-/scene_manager/card.js?v=1.0.16
+/scene_manager/card.js?v=1.0.17
 ```
 
 En mode Lovelace UI/storage, l'integration tente d'ajouter cette ressource automatiquement. En mode YAML, ajoutez-la manuellement :
 
 ```yaml
 resources:
-  - url: /scene_manager/card.js?v=1.0.16
+  - url: /scene_manager/card.js?v=1.0.17
     type: module
 ```
 
@@ -92,7 +92,7 @@ Met a jour l'ordre d'affichage des scenes pour une piece.
 Si Home Assistant affiche `Custom element doesn't exist: scene-manager-card`, verifiez que la ressource existe dans **Parametres** > **Tableaux de bord** > menu **Ressources** :
 
 ```text
-URL: /scene_manager/card.js?v=1.0.16
+URL: /scene_manager/card.js?v=1.0.17
 Type: module
 ```
 

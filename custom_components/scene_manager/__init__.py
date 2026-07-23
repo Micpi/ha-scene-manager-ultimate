@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover - older Home Assistant versions
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "scene_manager"
-VERSION = "1.0.16"
+VERSION = "1.0.17"
 
 STORAGE_KEY = "scene_manager_data"
 STORAGE_VERSION = 1

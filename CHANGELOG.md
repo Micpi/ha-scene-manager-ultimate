@@ -1,5 +1,46 @@
 # Changelog
 
+## v1.0.17 - 2026-07-23
+
+- Date: 2026-07-23
+- Component: integration / scene-manager-ultimate
+- Repository: Micpi/ha-scene-manager-ultimate
+- Previous tag: v1.0.16
+- HACS version: v1.0.17
+
+## Summary
+
+- fix(scene-manager): normalize room ids in bundled card
+- Build: skipped (not a card)
+- Version metadata updated: hacs.json, manifest.json
+
+## Detailed changelog
+
+### Documentation
+
+- `README.md` - changed (+4 -4, working tree)
+
+### HACS and metadata
+
+- `custom_components/scene_manager/manifest.json` - changed (+1 -1, working tree)
+- `hacs.json` - changed (+1 -1, working tree)
+
+### Integration source
+
+- `custom_components/scene_manager/__init__.py` - changed (+1 -1, working tree)
+- `custom_components/scene_manager/www/scene-manager-card.js` - changed (+12 -6, working tree)
+
+## Commits since previous tag
+
+- No committed changes since previous tag before this release commit.
+
+## HACS update notes
+
+- HACS should detect this release from tag `v1.0.17`.
+- If the update does not appear immediately, refresh HACS cache or wait for the next HACS refresh cycle.
+
+# Changelog
+
 ## v1.0.16 - 2026-07-23
 
 - Date: 2026-07-23

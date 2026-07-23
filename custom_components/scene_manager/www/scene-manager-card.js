@@ -1,11 +1,11 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.0.16
+// Version: 1.0.17
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.0.16';
+const VERSION = '1.0.17';
 const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 
 // ... Le reste du code de la classe SceneManagerCard ...
@@ -473,6 +473,12 @@ class SceneManagerCard extends HTMLElement {
 
     _getStorageEntityId() { return REGISTRY_ENTITY_ID; }
 
+    _normalizeId(value) {
+        return (value || '').toString().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_|_$/g, '');
+    }
+
+    _currentRoomKey() { return this._normalizeId(this.currentRoom); }
+
     _useManualLights() {
         return !!(this.config && this.config.manual_lights);
     }
@@ -578,7 +584,7 @@ class SceneManagerCard extends HTMLElement {
                 if (Array.isArray(allOrders)) {
                     this.cachedOrder = allOrders;
                 } else {
-                    this.cachedOrder = allOrders[this.currentRoom] || [];
+                    this.cachedOrder = allOrders[this._currentRoomKey()] || [];
                 }
                 this.cachedMeta = stateObj.attributes.meta || {};
                 this.shouldUpdate = true;
@@ -590,7 +596,7 @@ class SceneManagerCard extends HTMLElement {
     _saveOrder(orderedIds) {
         this.cachedOrder = orderedIds.filter(Boolean);
         this._hass.callService("scene_manager", "reorder_scenes", {
-            room: this.currentRoom,
+            room: this._currentRoomKey(),
             order: this.cachedOrder
         }).catch(err => console.error("scene-manager: reorder_scenes failed", err));
     }
@@ -763,7 +769,7 @@ class SceneManagerCard extends HTMLElement {
 
     async _saveScene() {
         const name = this.inputName.value; if (!name) return alert("Nom vide !");
-        const room = this.currentRoom.toLowerCase(); if (!room) return alert("Aucune pièce");
+        const room = this._currentRoomKey(); if (!room) return alert("Aucune pièce");
         const color = this.inputColor.value; const iconToSave = this.currentIcon;
 
         // Improved slug generation: remove special chars, replace spaces with _, trim _
@@ -814,7 +820,7 @@ class SceneManagerCard extends HTMLElement {
 
     _updateContent() {
         if (!this.currentRoom) return;
-        const prefix = `scene.${this.currentRoom.toLowerCase()}_`;
+        const prefix = `scene.${this._currentRoomKey()}_`;
         let scenes = Object.keys(this._hass.states).filter((eid) => eid.startsWith(prefix) && this._hass.states[eid].state !== 'unavailable');
         const storedOrder = this._loadOrder(); const meta = this._loadMeta();
         if (storedOrder.length > 0) { scenes.sort((a, b) => { const indexA = storedOrder.indexOf(a); const indexB = storedOrder.indexOf(b); return (indexA === -1 ? 9999 : indexA) - (indexB === -1 ? 9999 : indexB); }); }
