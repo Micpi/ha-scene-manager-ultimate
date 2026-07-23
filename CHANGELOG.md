@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.1.0 - 2026-07-23
+
+- Date: 2026-07-23
+- Component: integration / scene-manager-ultimate
+- Repository: Micpi/ha-scene-manager-ultimate
+- Previous tag: v1.0.18
+- HACS version: v1.1.0
+
+## Summary
+
+- feat(scene-manager): add native entities and live edit mode
+- Build: skipped (not a card)
+- Version metadata updated: hacs.json, manifest.json
+
+## Detailed changelog
+
+### Documentation
+
+- `README.md` - changed (+31 -2, working tree)
+
+### HACS and metadata
+
+- `custom_components/scene_manager/manifest.json` - changed (+1 -1, working tree)
+- `custom_components/scene_manager/services.yaml` - changed (+43 -1, working tree)
+- `custom_components/scene_manager/strings.json` - changed (+1 -1, working tree)
+- `hacs.json` - changed (+1 -1, working tree)
+
+### Integration source
+
+- `custom_components/scene_manager/__init__.py` - changed (+659 -295, working tree)
+- `custom_components/scene_manager/button.py` - added (+140 -0, working tree)
+- `custom_components/scene_manager/config_flow.py` - changed (+7 -0, working tree)
+- `custom_components/scene_manager/sensor.py` - added (+172 -0, working tree)
+- `custom_components/scene_manager/switch.py` - added (+80 -0, working tree)
+- `custom_components/scene_manager/translations/en.json` - changed (+1 -1, working tree)
+- `custom_components/scene_manager/translations/fr.json` - changed (+1 -1, working tree)
+
+## Commits since previous tag
+
+- No committed changes since previous tag before this release commit.
+
+## HACS update notes
+
+- HACS should detect this release from tag `v1.1.0`.
+- If the update does not appear immediately, refresh HACS cache or wait for the next HACS refresh cycle.
+
+# Changelog
+
 ## v1.0.18 - 2026-07-23
 
 - Date: 2026-07-23

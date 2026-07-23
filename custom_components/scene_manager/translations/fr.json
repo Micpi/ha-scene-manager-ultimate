@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Scene Manager Ultimate",
-        "description": "Cree le backend Scene Manager Ultimate utilise par la carte Lovelace."
+        "description": "Cree le backend Scene Manager Ultimate, ses capteurs, le switch de mode live et les boutons de scenes."
       }
     },
     "abort": {

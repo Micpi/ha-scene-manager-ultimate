@@ -10,11 +10,16 @@ save_scene:
         text: {}
     entities:
       name: Entites
-      description: Entites a capturer dans la scene.
+      description: Entites a capturer dans la scene, ou objet d'etats prepare par la carte.
       required: true
       selector:
         entity:
           multiple: true
+    snapshot:
+      name: Instantane
+      description: Etats optionnels a sauvegarder sans modifier les entites en live.
+      selector:
+        object: {}
     icon:
       name: Icone
       description: Icone MDI affichee par la carte.
@@ -78,3 +83,40 @@ reorder_scenes:
       required: true
       selector:
         object: {}
+
+activate_scene:
+  name: Activer une scene
+  description: Declenche une scene sauvegardee et memorise l'action dans les capteurs Scene Manager.
+  fields:
+    entity_id:
+      name: Scene
+      description: Entite scene a declencher.
+      required: true
+      selector:
+        entity:
+          domain: scene
+    transition:
+      name: Transition
+      description: Duree de transition optionnelle en secondes.
+      selector:
+        number:
+          min: 0
+          max: 120
+          mode: box
+    source:
+      name: Source
+      description: Origine de l'action, par exemple card, button ou automation.
+      default: service
+      selector:
+        text: {}
+
+set_live_mode:
+  name: Definir le mode live
+  description: Active ou desactive la modification live des scenes.
+  fields:
+    enabled:
+      name: Active
+      description: Etat du mode live a memoriser.
+      required: true
+      selector:
+        boolean: {}
