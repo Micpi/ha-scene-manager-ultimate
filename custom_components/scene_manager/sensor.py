@@ -16,6 +16,7 @@ from . import DOMAIN, REGISTRY_ENTITY_ID, SIGNAL_UPDATED, VERSION, SceneManagerR
 
 def _parse_timestamp(value: str | None) -> datetime | None:
     """Parse an ISO timestamp for Home Assistant timestamp sensors."""
+    # Empty values should render as unavailable instead of raising.
     if not value:
         return None
     try:
@@ -27,7 +28,10 @@ def _parse_timestamp(value: str | None) -> datetime | None:
 class SceneManagerBaseSensor(SensorEntity):
     """Base Scene Manager sensor."""
 
+    # Let Home Assistant combine device name and entity name.
     _attr_has_entity_name = True
+
+    # Sensors update from dispatcher signals, not polling.
     _attr_should_poll = False
 
     def __init__(
@@ -37,9 +41,17 @@ class SceneManagerBaseSensor(SensorEntity):
         key: str,
         name: str,
     ) -> None:
+        """Initialize shared sensor metadata."""
+        # Shared runtime coordinator used to read Scene Manager state.
         self.manager = manager
+
+        # Unique id stable across restarts for entity registry.
         self._attr_unique_id = f"{entry.entry_id}_{key}"
+
+        # User-visible sensor name suffix.
         self._attr_name = name
+
+        # Device metadata groups all Scene Manager entities together.
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": "Scene Manager Ultimate",
@@ -67,10 +79,14 @@ class SceneManagerBaseSensor(SensorEntity):
 class SceneManagerRegistrySensor(SceneManagerBaseSensor):
     """Registry sensor consumed by the Lovelace card."""
 
+    # Fixed entity id consumed directly by the Lovelace card.
     _attr_entity_id = REGISTRY_ENTITY_ID
+
+    # Icon displayed by Home Assistant for the registry sensor.
     _attr_icon = "mdi:database-sync"
 
     def __init__(self, manager: SceneManagerRuntime, entry: ConfigEntry) -> None:
+        """Initialize the registry sensor."""
         super().__init__(manager, entry, "registry", "Registry")
 
     @property
@@ -87,10 +103,14 @@ class SceneManagerRegistrySensor(SceneManagerBaseSensor):
 class SceneManagerSceneCountSensor(SceneManagerBaseSensor):
     """Sensor exposing the amount of stored scenes."""
 
+    # Fixed entity id for scene count automations/dashboards.
     _attr_entity_id = "sensor.scene_manager_scene_count"
+
+    # Icon displayed by Home Assistant for scene count.
     _attr_icon = "mdi:palette-swatch"
 
     def __init__(self, manager: SceneManagerRuntime, entry: ConfigEntry) -> None:
+        """Initialize the scene count sensor."""
         super().__init__(manager, entry, "scene_count", "Scenes")
 
     @property
@@ -102,10 +122,14 @@ class SceneManagerSceneCountSensor(SceneManagerBaseSensor):
 class SceneManagerLastModifiedSensor(SceneManagerBaseSensor):
     """Timestamp of the last scene manager modification."""
 
+    # Fixed entity id for the last modification timestamp.
     _attr_entity_id = "sensor.scene_manager_last_modified"
+
+    # Timestamp device class lets Home Assistant format the datetime.
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
     def __init__(self, manager: SceneManagerRuntime, entry: ConfigEntry) -> None:
+        """Initialize the last modified timestamp sensor."""
         super().__init__(manager, entry, "last_modified", "Last Modified")
 
     @property
@@ -117,10 +141,14 @@ class SceneManagerLastModifiedSensor(SceneManagerBaseSensor):
 class SceneManagerLastModifiedBySensor(SceneManagerBaseSensor):
     """User who last modified Scene Manager data."""
 
+    # Fixed entity id for the last modifier label.
     _attr_entity_id = "sensor.scene_manager_last_modified_by"
+
+    # Icon displayed by Home Assistant for the modifier sensor.
     _attr_icon = "mdi:account-edit"
 
     def __init__(self, manager: SceneManagerRuntime, entry: ConfigEntry) -> None:
+        """Initialize the last modified by sensor."""
         super().__init__(manager, entry, "last_modified_by", "Last Modified By")
 
     @property
@@ -132,10 +160,14 @@ class SceneManagerLastModifiedBySensor(SceneManagerBaseSensor):
 class SceneManagerLastActionSensor(SceneManagerBaseSensor):
     """Last Scene Manager action."""
 
+    # Fixed entity id for the last action state.
     _attr_entity_id = "sensor.scene_manager_last_action"
+
+    # Icon displayed by Home Assistant for last action history.
     _attr_icon = "mdi:history"
 
     def __init__(self, manager: SceneManagerRuntime, entry: ConfigEntry) -> None:
+        """Initialize the last action sensor."""
         super().__init__(manager, entry, "last_action", "Last Action")
 
     @property
@@ -160,6 +192,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Scene Manager sensors."""
+    # Runtime created by __init__.py during integration setup.
     manager: SceneManagerRuntime = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
         [

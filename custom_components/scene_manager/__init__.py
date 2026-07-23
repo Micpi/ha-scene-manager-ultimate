@@ -34,30 +34,65 @@ except ImportError:  # pragma: no cover - Lovelace is always available on suppor
     CONF_RESOURCES = "resources"
 
 
+# Integration domain used by Home Assistant, HACS, services, and stored data.
 DOMAIN = "scene_manager"
-VERSION = "1.1.1"
 
+# Integration version published in manifest.json and HACS releases.
+VERSION = "1.1.2"
+
+# Storage key and schema version for Home Assistant's .storage helper.
 STORAGE_KEY = "scene_manager_data"
 STORAGE_VERSION = 1
 
+# Registry sensor entity id consumed by the Lovelace card.
 REGISTRY_ENTITY_ID = "sensor.scene_manager_registry"
+
+# Independent Lovelace card repository advertised through registry attributes.
 CARD_REPOSITORY = "Micpi/scene-manager-card"
+
+# HACS resource URL used by dashboards once the separate card repo is installed.
 CARD_RESOURCE_URL = "/hacsfiles/scene-manager-card/scene-manager-card.js"
+
+# Legacy embedded card URL kept only so old resources can be removed cleanly.
 LEGACY_CARD_URL = f"/{DOMAIN}/card.js"
+
+# Legacy embedded card filename removed during setup/remove.
 LEGACY_CARD_FILENAME = "scene-manager-card.js"
 
+# Service field holding the logical order bucket for a room/prefix combination.
 CONF_ORDER_KEY = "order_key"
+
+# Service field holding the old scene entity id when a scene is renamed.
 CONF_REPLACE_ENTITY_ID = "replace_entity_id"
 
+# Service field holding the scene entity id being edited before save.
+CONF_ORIGINAL_ENTITY_ID = "original_entity_id"
+
+# Service field holding the original visual position supplied by the card.
+CONF_POSITION = "position"
+
+# Service name for creating or updating a managed scene.
 SERVICE_SAVE_SCENE = "save_scene"
+
+# Service name for deleting a managed scene and its metadata.
 SERVICE_DELETE_SCENE = "delete_scene"
+
+# Service name for persisting drag-and-drop scene order.
 SERVICE_REORDER_SCENES = "reorder_scenes"
+
+# Service name for activating a scene with Scene Manager audit metadata.
 SERVICE_ACTIVATE_SCENE = "activate_scene"
+
+# Service name for changing the persistent live edit mode flag.
 SERVICE_SET_LIVE_MODE = "set_live_mode"
 
+# Dispatcher signal used to refresh sensors, switches, and buttons.
 SIGNAL_UPDATED = f"{DOMAIN}_updated"
+
+# Platforms exposed by this integration.
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BUTTON]
 
+# Module logger used for debug-only housekeeping failures.
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -237,6 +272,31 @@ def _normalise_scene_entity_id(raw: Any) -> str:
     return f"{SCENE_DOMAIN}.{_slugify(value)}"
 
 
+def _normalise_optional_scene_entity_id(raw: Any) -> str | None:
+    """Return a normalized scene entity id or None for empty optional input."""
+    if raw is None:
+        return None
+
+    value = str(raw).strip()
+    if not value:
+        return None
+
+    return _normalise_scene_entity_id(value)
+
+
+def _normalise_order_position(raw: Any) -> int | None:
+    """Return a safe zero-based order position or None when absent/invalid."""
+    if raw in (None, ""):
+        return None
+
+    try:
+        position = int(raw)
+    except (TypeError, ValueError):
+        return None
+
+    return max(0, position)
+
+
 def _scene_id_from_entity_id(entity_id: str) -> str:
     """Return the scene service id from an entity id."""
     if entity_id.startswith(f"{SCENE_DOMAIN}."):
@@ -244,9 +304,16 @@ def _scene_id_from_entity_id(entity_id: str) -> str:
     return _slugify(entity_id)
 
 
-def _remove_from_order(order: dict[str, Any], entity_id: str) -> None:
-    """Remove a scene id from every stored order list."""
+def _remove_from_order(
+    order: dict[str, Any],
+    entity_id: str,
+    *,
+    keep_key: str | None = None,
+) -> None:
+    """Remove a scene id from stored order lists, optionally keeping one key."""
     for key, value in list(order.items()):
+        if key == keep_key:
+            continue
         if isinstance(value, list):
             order[key] = [item for item in value if item != entity_id]
 
@@ -298,9 +365,17 @@ class SceneManagerRuntime:
     """Runtime coordinator for Scene Manager entities and services."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the runtime coordinator and its storage handle."""
+        # Home Assistant instance used for services, states, auth, and dispatch.
         self.hass = hass
+
+        # Config entry owning this runtime.
         self.entry = entry
+
+        # Persistent storage helper for all Scene Manager metadata.
         self.store: Store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+
+        # Normalized in-memory data payload mirrored to Home Assistant storage.
         self.data: dict[str, Any] = _new_data()
 
     @property
@@ -389,6 +464,8 @@ class SceneManagerRuntime:
             "last_scene": self.last_scene,
             "last_triggered": self.last_triggered,
             "revision": self.revision,
+            "supports_atomic_save_order": True,
+            "supports_save_position": True,
         }
 
     async def async_setup(self) -> None:
@@ -530,9 +607,16 @@ class SceneManagerRuntime:
         if not raw_scene_id:
             raise ServiceValidationError("scene_id is required")
 
+        # Target scene id after slug normalization.
         scene_id = _slugify(str(raw_scene_id))
+
+        # Final Home Assistant scene entity id that will exist after the save.
         entity_id = f"{SCENE_DOMAIN}.{scene_id}"
+
+        # Optional prepared snapshot from the card.
         snapshot_payload = call.data.get("snapshot")
+
+        # Either a list of entity ids or a snapshot-compatible object.
         entities_payload = call.data.get("entities")
 
         if isinstance(snapshot_payload, dict):
@@ -540,7 +624,10 @@ class SceneManagerRuntime:
         elif isinstance(entities_payload, dict):
             snapshot = _normalise_snapshot(entities_payload)
         else:
+            # Entity ids captured from current Home Assistant state.
             entities = _normalise_entities(entities_payload)
+
+            # Snapshot built from live Home Assistant states.
             snapshot: dict[str, Any] = {}
             for entity in entities:
                 state = self.hass.states.get(entity)
@@ -553,11 +640,33 @@ class SceneManagerRuntime:
             if not snapshot:
                 raise ServiceValidationError("No valid entities to capture")
 
-        replace_entity_id = call.data.get(CONF_REPLACE_ENTITY_ID)
+        # Scene entity being replaced during a rename.
+        replace_entity_id = _normalise_optional_scene_entity_id(
+            call.data.get(CONF_REPLACE_ENTITY_ID)
+        )
+
+        # Scene entity that was edited in the card before save.
+        original_entity_id = _normalise_optional_scene_entity_id(
+            call.data.get(CONF_ORIGINAL_ENTITY_ID)
+        )
+
+        # Zero-based position captured by the card when editing started.
+        requested_position = _normalise_order_position(call.data.get(CONF_POSITION))
+
+        # Existing metadata is read before removing renamed entities so timestamps survive.
+        existing = self.meta.get(entity_id, {})
+        if not isinstance(existing, dict):
+            existing = {}
+
+        # Metadata from the replaced/original scene is the fallback for rename saves.
+        previous_entity_id = replace_entity_id or original_entity_id
+        if previous_entity_id and previous_entity_id != entity_id:
+            previous = self.meta.get(previous_entity_id, {})
+            if isinstance(previous, dict):
+                existing = previous
+
         if replace_entity_id and replace_entity_id != entity_id:
-            replace_entity_id = _normalise_scene_entity_id(replace_entity_id)
             self.meta.pop(replace_entity_id, None)
-            _remove_from_order(self.order, replace_entity_id)
             self.hass.states.async_remove(replace_entity_id)
 
         await self.hass.services.async_call(
@@ -570,7 +679,8 @@ class SceneManagerRuntime:
 
         when = _utc_now_iso()
         user = await self.async_user_label(call.context)
-        existing = self.meta.get(entity_id, {})
+
+        # Stored metadata is what sensors and the Lovelace card consume.
         item = {
             "icon": str(call.data.get("icon") or existing.get("icon") or "mdi:palette"),
             "color": _normalise_color(call.data.get("color") or existing.get("color")),
@@ -592,23 +702,31 @@ class SceneManagerRuntime:
 
         order_key = item["order_key"]
         requested_order = call.data.get("order")
-        if isinstance(requested_order, list):
-            self.order[order_key] = self._normalise_saved_order(
-                requested_order,
+
+        # The card usually sends the final visual list; if not, use stored order.
+        order_source = (
+            requested_order
+            if isinstance(requested_order, list)
+            else self._current_order_source(
+                order_key,
                 entity_id,
                 replace_entity_id,
+                original_entity_id,
             )
-        else:
-            current_order = self.order.setdefault(order_key, [])
-            if isinstance(current_order, list):
-                if replace_entity_id in current_order:
-                    index = current_order.index(replace_entity_id)
-                    current_order[index] = entity_id
-                elif entity_id not in current_order:
-                    current_order.append(entity_id)
-                self.order[order_key] = [
-                    value for value in current_order if isinstance(value, str)
-                ]
+        )
+        self.order[order_key] = self._normalise_saved_order(
+            order_source,
+            entity_id,
+            replace_entity_id,
+            original_entity_id,
+            requested_position,
+        )
+
+        for stale_entity_id in (replace_entity_id, original_entity_id):
+            if stale_entity_id and stale_entity_id != entity_id:
+                _remove_from_order(self.order, stale_entity_id, keep_key=order_key)
+
+        _remove_from_order(self.order, entity_id, keep_key=order_key)
 
         await self.async_save_data(
             action=SERVICE_SAVE_SCENE,
@@ -619,25 +737,61 @@ class SceneManagerRuntime:
             when=when,
         )
 
+    def _current_order_source(
+        self,
+        order_key: str,
+        entity_id: str,
+        replace_entity_id: str | None,
+        original_entity_id: str | None,
+    ) -> list[Any]:
+        """Return the best stored order list to preserve an edited scene position."""
+        aliases = {
+            value
+            for value in (entity_id, replace_entity_id, original_entity_id)
+            if isinstance(value, str)
+        }
+
+        current_order = self.order.get(order_key)
+        if isinstance(current_order, list) and any(item in aliases for item in current_order):
+            return list(current_order)
+
+        for stored_order in self.order.values():
+            if isinstance(stored_order, list) and any(item in aliases for item in stored_order):
+                return list(stored_order)
+
+        return list(current_order) if isinstance(current_order, list) else []
+
     def _normalise_saved_order(
         self,
         requested_order: list[Any],
         entity_id: str,
         replace_entity_id: str | None,
+        original_entity_id: str | None,
+        requested_position: int | None,
     ) -> list[str]:
-        """Normalize a card-supplied order while preserving the saved scene."""
+        """Normalize a save order and insert the saved scene at its stable position."""
+        aliases = {
+            value
+            for value in (entity_id, replace_entity_id, original_entity_id)
+            if isinstance(value, str)
+        }
+
         order: list[str] = []
+        detected_position: int | None = None
         for raw_value in requested_order:
             if not isinstance(raw_value, str):
                 continue
             value = _normalise_scene_entity_id(raw_value)
-            if replace_entity_id and value == replace_entity_id:
-                value = entity_id
-            if value not in order:
+            if value in aliases and detected_position is None:
+                detected_position = len(order)
+            if value not in aliases and value not in order:
                 order.append(value)
 
-        if entity_id not in order:
-            order.append(entity_id)
+        insert_at = requested_position if requested_position is not None else detected_position
+        if insert_at is None:
+            insert_at = len(order)
+        insert_at = max(0, min(insert_at, len(order)))
+        order.insert(insert_at, entity_id)
 
         return order
 
@@ -669,7 +823,15 @@ class SceneManagerRuntime:
         if not isinstance(order, list):
             raise ServiceValidationError("order must be a list of entity ids")
 
-        self.order[order_key] = [value for value in order if isinstance(value, str)]
+        normalised_order: list[str] = []
+        for raw_value in order:
+            if not isinstance(raw_value, str):
+                continue
+            entity_id = _normalise_scene_entity_id(raw_value)
+            if entity_id not in normalised_order:
+                normalised_order.append(entity_id)
+
+        self.order[order_key] = normalised_order
         await self.async_save_data(
             action=SERVICE_REORDER_SCENES,
             modified=True,

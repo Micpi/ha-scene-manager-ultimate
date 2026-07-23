@@ -49,6 +49,20 @@ save_scene:
       selector:
         entity:
           domain: scene
+    original_entity_id:
+      name: Scene originale
+      description: Scene editee avant sauvegarde, utilisee pour conserver sa position.
+      selector:
+        entity:
+          domain: scene
+    position:
+      name: Position
+      description: Index visuel zero-based a conserver pendant l'enregistrement.
+      selector:
+        number:
+          min: 0
+          max: 500
+          mode: box
     order:
       name: Ordre
       description: Liste ordonnee optionnelle a sauvegarder en meme temps que la scene.

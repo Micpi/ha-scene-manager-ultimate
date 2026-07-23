@@ -20,6 +20,7 @@ def _button_key(entity_id: str) -> str:
 
 def _scene_name(manager: SceneManagerRuntime, entity_id: str) -> str:
     """Return a readable scene name."""
+    # Prefer Home Assistant's friendly name when the scene state exists.
     state = manager.hass.states.get(entity_id)
     if state is not None:
         friendly_name = state.attributes.get("friendly_name")
@@ -32,7 +33,10 @@ def _scene_name(manager: SceneManagerRuntime, entity_id: str) -> str:
 class SceneManagerSceneButton(ButtonEntity):
     """Button that activates one stored scene."""
 
+    # Let Home Assistant combine device name and entity name.
     _attr_has_entity_name = True
+
+    # Buttons update from dispatcher signals, not polling.
     _attr_should_poll = False
 
     def __init__(
@@ -41,10 +45,20 @@ class SceneManagerSceneButton(ButtonEntity):
         entry: ConfigEntry,
         scene_entity_id: str,
     ) -> None:
+        """Initialize one dynamic scene activation button."""
+        # Shared runtime coordinator used to activate and inspect scenes.
         self.manager = manager
+
+        # Managed scene entity id activated by this button.
         self.scene_entity_id = scene_entity_id
+
+        # Unique id stable across restarts for entity registry.
         self._attr_unique_id = f"{entry.entry_id}_{_button_key(scene_entity_id)}_activate"
+
+        # Fixed-ish entity id generated from the scene entity id.
         self._attr_entity_id = f"button.scene_manager_activate_{scene_entity_id.split('.', 1)[-1]}"
+
+        # Device metadata groups all Scene Manager entities together.
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": "Scene Manager Ultimate",
@@ -119,11 +133,16 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Scene Manager scene buttons."""
+    # Runtime created by __init__.py during integration setup.
     manager: SceneManagerRuntime = hass.data[DOMAIN][entry.entry_id]
+
+    # Scene ids that already have a Home Assistant button entity.
     known: set[str] = set()
 
     @callback
     def add_missing_buttons() -> None:
+        """Create buttons for scenes that appeared after setup."""
+        # Button entities created during this update pass.
         new_entities: list[SceneManagerSceneButton] = []
         for scene_entity_id in sorted(manager.meta):
             if scene_entity_id in known:
