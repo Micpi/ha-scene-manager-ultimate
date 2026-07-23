@@ -8,13 +8,10 @@
   "after_dependencies": [
     "lovelace"
   ],
-  "dependencies": [
-    "http"
-  ],
   "documentation": "https://github.com/Micpi/ha-scene-manager-ultimate",
   "integration_type": "helper",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/Micpi/ha-scene-manager-ultimate/issues",
   "single_config_entry": true,
-  "version": "1.0.17"
+  "version": "1.0.18"
 }

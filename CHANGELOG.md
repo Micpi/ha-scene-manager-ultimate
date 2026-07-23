@@ -1,5 +1,51 @@
 # Changelog
 
+## v1.0.18 - 2026-07-23
+
+- Date: 2026-07-23
+- Component: integration / scene-manager-ultimate
+- Repository: Micpi/ha-scene-manager-ultimate
+- Previous tag: v1.0.17
+- HACS version: v1.0.18
+
+## Summary
+
+- refactor(scene-manager): split Lovelace card into separate HACS repo
+- Build: skipped (not a card)
+- Version metadata updated: hacs.json, manifest.json
+
+## Detailed changelog
+
+### Documentation
+
+- `README.md` - changed (+19 -36, working tree)
+
+### HACS and metadata
+
+- `custom_components/scene_manager/manifest.json` - changed (+1 -4, working tree)
+- `custom_components/scene_manager/services.yaml` - changed (+10 -0, working tree)
+- `custom_components/scene_manager/strings.json` - changed (+1 -16, working tree)
+- `hacs.json` - changed (+1 -1, working tree)
+
+### Integration source
+
+- `custom_components/scene_manager/__init__.py` - changed (+40 -151, working tree)
+- `custom_components/scene_manager/config_flow.py` - changed (+3 -77, working tree)
+- `custom_components/scene_manager/translations/en.json` - changed (+1 -16, working tree)
+- `custom_components/scene_manager/translations/fr.json` - changed (+1 -16, working tree)
+- `custom_components/scene_manager/www/scene-manager-card.js` - removed (+0 -1526, working tree)
+
+## Commits since previous tag
+
+- No committed changes since previous tag before this release commit.
+
+## HACS update notes
+
+- HACS should detect this release from tag `v1.0.18`.
+- If the update does not appear immediately, refresh HACS cache or wait for the next HACS refresh cycle.
+
+# Changelog
+
 ## v1.0.17 - 2026-07-23
 
 - Date: 2026-07-23

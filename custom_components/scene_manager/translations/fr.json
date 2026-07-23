@@ -3,26 +3,11 @@
     "step": {
       "user": {
         "title": "Scene Manager Ultimate",
-        "description": "Configure l'enregistrement de la carte Lovelace embarquee.",
-        "data": {
-          "auto_register_resource": "Enregistrer automatiquement la ressource Lovelace de la carte",
-          "notify_resource_fallback": "Me notifier si l'enregistrement automatique est impossible"
-        }
+        "description": "Cree le backend Scene Manager Ultimate utilise par la carte Lovelace."
       }
     },
     "abort": {
       "single_instance_allowed": "Scene Manager Ultimate est deja configure."
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "Options Scene Manager Ultimate",
-        "data": {
-          "auto_register_resource": "Enregistrer automatiquement la ressource Lovelace de la carte",
-          "notify_resource_fallback": "Me notifier si l'enregistrement automatique est impossible"
-        }
-      }
     }
   }
 }

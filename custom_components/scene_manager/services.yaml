@@ -33,6 +33,11 @@ save_scene:
       default: unknown
       selector:
         text: {}
+    order_key:
+      name: Cle d'ordre
+      description: Cle de tri optionnelle pour isoler plusieurs jeux de scenes dans une meme piece.
+      selector:
+        text: {}
     replace_entity_id:
       name: Scene remplacee
       description: Ancienne scene a supprimer lors d'un renommage.
@@ -60,6 +65,11 @@ reorder_scenes:
       name: Piece
       description: Piece ou zone concernee.
       required: true
+      selector:
+        text: {}
+    order_key:
+      name: Cle d'ordre
+      description: Cle de tri optionnelle. Si absente, la piece est utilisee.
       selector:
         text: {}
     order:

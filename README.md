@@ -1,8 +1,8 @@
 # Scene Manager Ultimate
 
-Scene Manager Ultimate est une integration Home Assistant qui permet de creer, restaurer, organiser et declencher des scenes depuis une carte Lovelace embarquee.
+Scene Manager Ultimate est le backend Home Assistant utilise par la carte Lovelace **Scene Manager Card**. L'integration gere le stockage, la restauration et les services de scenes; la carte est publiee dans un depot HACS separe pour permettre des mises a jour UI independantes.
 
-![Version](https://img.shields.io/badge/version-1.0.17-blue)
+![Version](https://img.shields.io/badge/version-1.0.18-blue)
 ![Maintenance](https://img.shields.io/badge/maintainer-Micpi-green)
 ![HACS](https://img.shields.io/badge/HACS-Custom%20Integration-orange)
 
@@ -10,11 +10,10 @@ Scene Manager Ultimate est une integration Home Assistant qui permet de creer, r
 
 - Creation de scenes en capturant l'etat actuel des entites selectionnees.
 - Restauration automatique des scenes creees par l'integration apres redemarrage.
-- Carte Lovelace `scene-manager-card` incluse dans l'integration.
-- Enregistrement automatique de la ressource Lovelace quand Home Assistant utilise les ressources en mode UI/storage.
-- Repli propre avec notification persistante si les ressources Lovelace sont gerees en YAML.
-- Tri par piece, drag and drop, icone et couleur par scene.
-- Nettoyage de la ressource et des donnees au retrait de l'integration.
+- Registre public `sensor.scene_manager_registry` pour synchroniser la carte.
+- Tri par piece ou par cle d'ordre optionnelle.
+- Services stables pour sauvegarder, supprimer et reordonner les scenes.
+- Nettoyage silencieux des anciennes ressources Lovelace creees par les versions qui embarquaient la carte.
 
 ## Installation HACS
 
@@ -24,21 +23,23 @@ Scene Manager Ultimate est une integration Home Assistant qui permet de creer, r
 4. Allez dans **Parametres** > **Appareils et services** > **Ajouter une integration**.
 5. Cherchez **Scene Manager Ultimate** et validez.
 
-La carte est servie par l'integration a cette URL :
+## Carte Lovelace
+
+La carte est maintenant publiee separement :
 
 ```text
-/scene_manager/card.js?v=1.0.17
+https://github.com/Micpi/scene-manager-card
 ```
 
-En mode Lovelace UI/storage, l'integration tente d'ajouter cette ressource automatiquement. En mode YAML, ajoutez-la manuellement :
+Ajoutez ce depot dans HACS comme depot personnalise de type **Lovelace**, puis installez **Scene Manager Card**.
+
+Ressource HACS attendue :
 
 ```yaml
 resources:
-  - url: /scene_manager/card.js?v=1.0.17
+  - url: /hacsfiles/scene-manager-card/scene-manager-card.js
     type: module
 ```
-
-## Carte Lovelace
 
 Exemple minimal :
 
@@ -47,19 +48,6 @@ type: custom:scene-manager-card
 title: Mes scenes
 icon: mdi:home-floor-1
 ```
-
-Options principales :
-
-| Option | Type | Description |
-| --- | --- | --- |
-| `title` | string | Titre affiche en haut de la carte. |
-| `icon` | string | Icone du titre. |
-| `room` | string | Piece fixe a afficher, par exemple `salon`. |
-| `show_title` | boolean | Affiche ou masque l'en-tete. |
-| `button_style` | string | `filled`, `outline` ou `ghost`. |
-| `button_shape` | string | `rounded`, `box` ou `circle`. |
-| `manual_lights` | boolean | Active la configuration manuelle des pieces/lumieres. |
-| `manual_rooms` | list | Liste de pieces manuelles avec leurs lumieres. |
 
 ## Services
 
@@ -72,6 +60,7 @@ Cree ou met a jour une scene.
 - `icon` : icone MDI.
 - `color` : couleur hexadecimale, par exemple `#03A9F4`.
 - `room` : piece utilisee pour le filtrage.
+- `order_key` : cle de tri optionnelle pour isoler plusieurs jeux de scenes.
 - `replace_entity_id` : ancienne scene a supprimer lors d'un renommage.
 
 ### `scene_manager.delete_scene`
@@ -82,18 +71,12 @@ Supprime une scene et ses metadonnees.
 
 ### `scene_manager.reorder_scenes`
 
-Met a jour l'ordre d'affichage des scenes pour une piece.
+Met a jour l'ordre d'affichage des scenes.
 
 - `room` : piece concernee.
+- `order_key` : cle de tri optionnelle. Si absente, `room` est utilise.
 - `order` : liste ordonnee d'entites `scene.*`.
 
-## Depannage
+## Migration depuis les versions avec carte embarquee
 
-Si Home Assistant affiche `Custom element doesn't exist: scene-manager-card`, verifiez que la ressource existe dans **Parametres** > **Tableaux de bord** > menu **Ressources** :
-
-```text
-URL: /scene_manager/card.js?v=1.0.17
-Type: module
-```
-
-Si votre configuration Lovelace est en mode YAML, l'ajout automatique n'est pas possible : ajoutez la ressource dans votre YAML puis rechargez Home Assistant.
+Les anciennes versions pouvaient ajouter une ressource `/scene_manager/card.js`. A partir de `v1.0.18`, l'integration ne sert plus cette carte. Installez `scene-manager-card` via HACS et utilisez `/hacsfiles/scene-manager-card/scene-manager-card.js`.
