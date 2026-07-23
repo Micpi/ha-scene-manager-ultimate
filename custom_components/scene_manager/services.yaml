@@ -49,6 +49,11 @@ save_scene:
       selector:
         entity:
           domain: scene
+    order:
+      name: Ordre
+      description: Liste ordonnee optionnelle a sauvegarder en meme temps que la scene.
+      selector:
+        object: {}
 
 delete_scene:
   name: Supprimer une scene

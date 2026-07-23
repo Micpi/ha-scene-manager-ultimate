@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover - Lovelace is always available on suppor
 
 
 DOMAIN = "scene_manager"
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 STORAGE_KEY = "scene_manager_data"
 STORAGE_VERSION = 1
@@ -591,16 +591,24 @@ class SceneManagerRuntime:
         self.async_set_scene_attributes(entity_id, item)
 
         order_key = item["order_key"]
-        current_order = self.order.setdefault(order_key, [])
-        if isinstance(current_order, list):
-            if replace_entity_id in current_order:
-                index = current_order.index(replace_entity_id)
-                current_order[index] = entity_id
-            elif entity_id not in current_order:
-                current_order.append(entity_id)
-            self.order[order_key] = [
-                value for value in current_order if isinstance(value, str)
-            ]
+        requested_order = call.data.get("order")
+        if isinstance(requested_order, list):
+            self.order[order_key] = self._normalise_saved_order(
+                requested_order,
+                entity_id,
+                replace_entity_id,
+            )
+        else:
+            current_order = self.order.setdefault(order_key, [])
+            if isinstance(current_order, list):
+                if replace_entity_id in current_order:
+                    index = current_order.index(replace_entity_id)
+                    current_order[index] = entity_id
+                elif entity_id not in current_order:
+                    current_order.append(entity_id)
+                self.order[order_key] = [
+                    value for value in current_order if isinstance(value, str)
+                ]
 
         await self.async_save_data(
             action=SERVICE_SAVE_SCENE,
@@ -610,6 +618,28 @@ class SceneManagerRuntime:
             user=user,
             when=when,
         )
+
+    def _normalise_saved_order(
+        self,
+        requested_order: list[Any],
+        entity_id: str,
+        replace_entity_id: str | None,
+    ) -> list[str]:
+        """Normalize a card-supplied order while preserving the saved scene."""
+        order: list[str] = []
+        for raw_value in requested_order:
+            if not isinstance(raw_value, str):
+                continue
+            value = _normalise_scene_entity_id(raw_value)
+            if replace_entity_id and value == replace_entity_id:
+                value = entity_id
+            if value not in order:
+                order.append(value)
+
+        if entity_id not in order:
+            order.append(entity_id)
+
+        return order
 
     async def async_handle_delete_scene(self, call: ServiceCall) -> None:
         """Delete a dynamic scene and its metadata."""

@@ -2,7 +2,7 @@
 
 Scene Manager Ultimate est le backend Home Assistant utilise par la carte Lovelace **Scene Manager Card**. L'integration gere le stockage, la restauration et les services de scenes; la carte est publiee dans un depot HACS separe pour permettre des mises a jour UI independantes.
 
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.1.1-blue)
 ![Maintenance](https://img.shields.io/badge/maintainer-Micpi-green)
 ![HACS](https://img.shields.io/badge/HACS-Custom%20Integration-orange)
 
@@ -77,6 +77,7 @@ Cree ou met a jour une scene.
 - `room` : piece utilisee pour le filtrage.
 - `order_key` : cle de tri optionnelle pour isoler plusieurs jeux de scenes.
 - `replace_entity_id` : ancienne scene a supprimer lors d'un renommage.
+- `order` : liste ordonnee optionnelle a appliquer dans la meme sauvegarde.
 
 ### `scene_manager.delete_scene`
 

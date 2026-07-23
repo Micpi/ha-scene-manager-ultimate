@@ -1,5 +1,46 @@
 # Changelog
 
+## v1.1.1 - 2026-07-23
+
+- Date: 2026-07-23
+- Component: integration / scene-manager-ultimate
+- Repository: Micpi/ha-scene-manager-ultimate
+- Previous tag: v1.1.0
+- HACS version: v1.1.1
+
+## Summary
+
+- fix(scene-manager): preserve order during scene save
+- Build: skipped (not a card)
+- Version metadata updated: hacs.json, manifest.json
+
+## Detailed changelog
+
+### Documentation
+
+- `README.md` - changed (+2 -1, working tree)
+
+### HACS and metadata
+
+- `custom_components/scene_manager/manifest.json` - changed (+1 -1, working tree)
+- `custom_components/scene_manager/services.yaml` - changed (+5 -0, working tree)
+- `hacs.json` - changed (+1 -1, working tree)
+
+### Integration source
+
+- `custom_components/scene_manager/__init__.py` - changed (+41 -11, working tree)
+
+## Commits since previous tag
+
+- No committed changes since previous tag before this release commit.
+
+## HACS update notes
+
+- HACS should detect this release from tag `v1.1.1`.
+- If the update does not appear immediately, refresh HACS cache or wait for the next HACS refresh cycle.
+
+# Changelog
+
 ## v1.1.0 - 2026-07-23
 
 - Date: 2026-07-23
