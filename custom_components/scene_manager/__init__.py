@@ -1,342 +1,530 @@
+"""Scene Manager Ultimate integration."""
+
+from __future__ import annotations
+
+from copy import deepcopy
 import logging
-import json
-import os
-import shutil
-# Some checks are noisy for Home Assistant integrations (imports and broad excepts).
-# We keep specific runtime-safe try/except in many places to avoid breaking HA on load.
-# Disable these linter rules file-wide to reduce noise while developing the integration.
-# pylint: disable=import-error,broad-except,unused-argument,no-name-in-module
-# type: ignore
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.config_entries import ConfigEntry
+from pathlib import Path
+import re
+import time
+from typing import Any
+
 from homeassistant.components.scene import DOMAIN as SCENE_DOMAIN
-from homeassistant.helpers.storage import Store 
-# --- IMPORT NOUVEAU POUR LA CORRECTION HTTP ---
-# Import conditionnel pour éviter les erreurs statiques/circulaires lors de l'analyse
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_URL
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.storage import Store
+
 try:
-    # Pylint may not find this symbol depending on la version locale de Home Assistant
-    # et l'import peut aussi déclencher des initialisations provoquant des imports circulaires.
-    # On ignore donc les erreurs statiques ici et on propose un fallback si nécessaire.
-    from homeassistant.components.http import StaticPathConfig  # pylint: disable=no-name-in-module,import-error
-except Exception:
-    StaticPathConfig = None
+    from homeassistant.components.http import StaticPathConfig
+except ImportError:  # pragma: no cover - compatibility with very old HA builds
+    StaticPathConfig = None  # type: ignore[assignment]
+
+try:
+    from homeassistant.components.lovelace.const import (
+        CONF_RESOURCE_TYPE_WS,
+        LOVELACE_DATA,
+        MODE_STORAGE,
+    )
+except ImportError:  # pragma: no cover - Lovelace internals changed over time
+    CONF_RESOURCE_TYPE_WS = "res_type"
+    LOVELACE_DATA = "lovelace"
+    MODE_STORAGE = "storage"
+
+try:
+    from homeassistant.exceptions import ServiceValidationError
+except ImportError:  # pragma: no cover - older Home Assistant versions
+    ServiceValidationError = HomeAssistantError  # type: ignore[misc,assignment]
 
 _LOGGER = logging.getLogger(__name__)
+
 DOMAIN = "scene_manager"
+VERSION = "1.0.16"
+
 STORAGE_KEY = "scene_manager_data"
 STORAGE_VERSION = 1
+REGISTRY_ENTITY_ID = "sensor.scene_manager_registry"
 
-async def async_setup(hass: HomeAssistant, config: dict):
-    # Register static path so the frontend asset is available even before
-    # a config entry is created. This exposes the file at /scene_manager/card.js
+CARD_FILENAME = "scene-manager-card.js"
+CARD_URL = f"/{DOMAIN}/card.js"
+CARD_RESOURCE_URL = f"{CARD_URL}?v={VERSION}"
+
+CONF_AUTO_REGISTER_RESOURCE = "auto_register_resource"
+CONF_NOTIFY_RESOURCE_FALLBACK = "notify_resource_fallback"
+CONF_REPLACE_ENTITY_ID = "replace_entity_id"
+
+DEFAULT_OPTIONS = {
+    CONF_AUTO_REGISTER_RESOURCE: True,
+    CONF_NOTIFY_RESOURCE_FALLBACK: True,
+}
+
+_SERVICE_SAVE_SCENE = "save_scene"
+_SERVICE_DELETE_SCENE = "delete_scene"
+_SERVICE_REORDER_SCENES = "reorder_scenes"
+
+
+def _card_path() -> str:
+    return str(Path(__file__).parent / "www" / CARD_FILENAME)
+
+
+def _entry_option(entry: ConfigEntry, key: str) -> bool:
+    if key in entry.options:
+        return bool(entry.options[key])
+    if key in entry.data:
+        return bool(entry.data[key])
+    return bool(DEFAULT_OPTIONS[key])
+
+
+def _new_data() -> dict[str, Any]:
+    return {"meta": {}, "order": {}, "revision": 0}
+
+
+async def _async_load_data(store: Store) -> dict[str, Any]:
+    raw = await store.async_load()
+    if not isinstance(raw, dict):
+        return _new_data()
+
+    meta = raw.get("meta")
+    order = raw.get("order")
+
+    raw["meta"] = meta if isinstance(meta, dict) else {}
+    raw["order"] = order if isinstance(order, dict) else {}
+    raw["revision"] = int(raw.get("revision", 0) or 0)
+    return raw
+
+
+def _public_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    public: dict[str, Any] = {}
+    for entity_id, scene_data in meta.items():
+        if not isinstance(scene_data, dict):
+            continue
+        public[entity_id] = {
+            key: value for key, value in scene_data.items() if key != "snapshot"
+        }
+    return public
+
+
+def _publish_registry(hass: HomeAssistant, data: dict[str, Any]) -> None:
+    hass.states.async_set(
+        REGISTRY_ENTITY_ID,
+        str(data.get("revision", 0)),
+        {
+            "version": VERSION,
+            "card_url": CARD_RESOURCE_URL,
+            "meta": _public_meta(data["meta"]),
+            "order": data["order"],
+        },
+    )
+
+
+async def _async_save_data(
+    hass: HomeAssistant, store: Store, data: dict[str, Any]
+) -> None:
+    data["revision"] = int(data.get("revision", 0) or 0) + 1
+    data["updated_at"] = time.time()
+    await store.async_save(data)
+    _publish_registry(hass, data)
+
+
+def _slugify(value: Any, fallback: str | None = None) -> str:
+    if not isinstance(value, str):
+        value = "" if value is None else str(value)
+    slug = re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_")
+    if not slug:
+        if fallback is not None:
+            return fallback
+        raise ServiceValidationError("scene_id must contain at least one valid character")
+    return slug
+
+
+def _scene_entity_id_from_call(call: ServiceCall) -> str:
+    entity_id = call.data.get("entity_id")
+    scene_id = call.data.get("scene_id")
+
+    if isinstance(entity_id, str) and entity_id:
+        if not entity_id.startswith("scene."):
+            raise ServiceValidationError("entity_id must be a scene entity")
+        return entity_id
+
+    if isinstance(scene_id, str) and scene_id:
+        if scene_id.startswith("scene."):
+            return scene_id
+        return f"scene.{_slugify(scene_id)}"
+
+    raise ServiceValidationError("entity_id or scene_id is required")
+
+
+def _normalise_entities(value: Any) -> list[str]:
+    if isinstance(value, str):
+        entities = [value]
+    elif isinstance(value, list):
+        entities = value
+    else:
+        raise ServiceValidationError("entities must be a list of entity IDs")
+
+    clean_entities = [
+        entity_id.strip()
+        for entity_id in entities
+        if isinstance(entity_id, str) and entity_id.strip()
+    ]
+    if not clean_entities:
+        raise ServiceValidationError("At least one entity is required")
+    return clean_entities
+
+
+def _normalise_color(value: Any) -> str:
+    if isinstance(value, list) and len(value) >= 3:
+        try:
+            red, green, blue = (max(0, min(255, int(channel))) for channel in value[:3])
+        except (TypeError, ValueError):
+            return "#9E9E9E"
+        return f"#{red:02X}{green:02X}{blue:02X}"
+
+    if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value.strip()):
+        return value.strip()
+
+    return "#9E9E9E"
+
+
+def _remove_from_order(data: dict[str, Any], entity_id: str) -> None:
+    for room, scenes in list(data["order"].items()):
+        if not isinstance(scenes, list):
+            data["order"][room] = []
+            continue
+        data["order"][room] = [scene for scene in scenes if scene != entity_id]
+
+
+async def _async_register_static_path(hass: HomeAssistant) -> bool:
+    if StaticPathConfig is None or not getattr(hass, "http", None):
+        _LOGGER.debug("Static path API is not available")
+        return False
+
     try:
-        await hass.http.async_register_static_paths([
-            StaticPathConfig(
-                "/scene_manager/card.js",
-                hass.config.path("custom_components/scene_manager/www/scene-manager-card.js"),
-                True,
-            )
-        ])
-    except Exception:
-        # If API not available, just ignore; path will be registered when the
-        # config entry is set up (in async_setup_entry).
-        _LOGGER.debug("Could not register static path at startup; will try on setup_entry")
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(CARD_URL, _card_path(), True)]
+        )
+    except RuntimeError as err:
+        _LOGGER.debug("Scene Manager card static path already registered: %s", err)
+    except Exception as err:  # noqa: BLE001 - Home Assistant logs the context
+        _LOGGER.warning("Could not register Scene Manager card static path: %s", err)
+        return False
 
     return True
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    _LOGGER.info("scene_manager: async_setup_entry called (V1.0.11)")
 
-    store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
-    data = await store.async_load() or {"meta": {}, "order": {}}
-    _LOGGER.info("scene_manager: loaded storage data. Scenes count: %d", len(data.get("meta", {})))
-
-    # --- RESTAURATION DES SCÈNES ---
-    # On recrée les scènes dans Home Assistant à partir des snapshots sauvegardés
+async def _async_restore_scenes(hass: HomeAssistant, data: dict[str, Any]) -> int:
     restored_count = 0
-    for scene_entity_id, scene_data in data.get("meta", {}).items():
+    for scene_entity_id, scene_data in data["meta"].items():
+        if not isinstance(scene_data, dict):
+            continue
+
+        snapshot = scene_data.get("snapshot")
+        if not isinstance(snapshot, dict) or not snapshot:
+            continue
+
+        scene_id = scene_entity_id.split(".", 1)[1] if "." in scene_entity_id else scene_entity_id
+
         try:
-            # scene_entity_id est sous la forme "scene.salon_film"
-            # On extrait l'ID court "salon_film"
-            if "." in scene_entity_id:
-                scene_id = scene_entity_id.split(".", 1)[1]
-            else:
-                scene_id = scene_entity_id
-
-            snapshot = scene_data.get("snapshot", {})
-            
-            # Si on a un snapshot, on recrée la scène
-            if snapshot:
-                await hass.services.async_call(
-                    SCENE_DOMAIN, "create",
-                    {"scene_id": scene_id, "entities": snapshot},
-                    blocking=True
-                )
-                
-                # On restaure aussi les attributs cosmétiques (icône, couleur) sur l'entité créée
-                state = hass.states.get(scene_entity_id)
-                if state:
-                    new_attrs = dict(state.attributes)
-                    if "icon" in scene_data:
-                        new_attrs['icon'] = scene_data["icon"]
-                    if "color" in scene_data:
-                        new_attrs['theme_color'] = scene_data["color"]
-                    hass.states.async_set(scene_entity_id, state.state, new_attrs)
-                
-                restored_count += 1
-        except Exception as e:
-            _LOGGER.warning("scene_manager: Failed to restore scene %s: %s", scene_entity_id, e)
-            
-    _LOGGER.info("scene_manager: Restored %d scenes from storage", restored_count)
-
-    def update_sensor():
-        hass.states.async_set(
-            "sensor.scene_manager_registry", 
-            str(os.urandom(8).hex()), 
-            {"meta": data["meta"], "order": data["order"]}
-        )
-
-    update_sensor()
-
-    # --- SERVICES ---
-    
-    async def handle_save_scene(call: ServiceCall):
-        _LOGGER.info("scene_manager: handle_save_scene called with data: %s", call.data)
-        try:
-            scene_id = call.data.get("scene_id")
-            entities = call.data.get("entities", [])
-            icon = call.data.get("icon", "mdi:palette")
-            color = call.data.get("color", "#9E9E9E")
-            room = call.data.get("room", "unknown")
-            
-            # Nettoyage de sécurité du scene_id
-            import re
-            clean_id = re.sub(r'[^a-z0-9_]', '_', scene_id.lower()).strip('_')
-            if clean_id != scene_id:
-                _LOGGER.warning("scene_manager: scene_id '%s' cleaned to '%s'", scene_id, clean_id)
-                scene_id = clean_id
-            
-            full_entity_id = f"scene.{scene_id}"
-
-            # 1. Capturer l'état actuel des entités pour la persistance (Snapshot)
-            snapshot = {}
-            for entity_id in entities:
-                state_obj = hass.states.get(entity_id)
-                if state_obj:
-                    # On sauvegarde l'état et les attributs pour pouvoir les restaurer via scene.create
-                    entity_data = dict(state_obj.attributes)
-                    entity_data["state"] = state_obj.state
-                    snapshot[entity_id] = entity_data
-
-            # 2. Créer la scène dans Home Assistant (immédiat)
-            try:
-                await hass.services.async_call(
-                    SCENE_DOMAIN, "create",
-                    {"scene_id": scene_id, "snapshot_entities": entities},
-                    blocking=True
-                )
-                _LOGGER.info("scene_manager: HA scene created: %s", full_entity_id)
-            except Exception as e:
-                _LOGGER.error("scene_manager: Failed to create HA scene: %s", e)
-                return # Stop if we can't create the scene
-
-            # 3. Mettre à jour les métadonnées AVEC LE SNAPSHOT
-            data["meta"][full_entity_id] = {
-                "icon": icon, 
-                "color": color, 
-                "room": room,
-                "snapshot": snapshot # On sauvegarde le snapshot !
-            }
-            
-            if room not in data["order"]: data["order"][room] = []
-            if full_entity_id not in data["order"][room]: data["order"][room].append(full_entity_id)
-
-            # 4. Sauvegarder sur le disque
-            try:
-                await store.async_save(data)
-                _LOGGER.info("scene_manager: SUCCESS - Data saved to storage. Total scenes: %d", len(data["meta"]))
-            except Exception as e:
-                _LOGGER.error("scene_manager: CRITICAL - Failed to save to storage: %s", e)
-            
-            # 5. Mettre à jour l'état pour l'UI immédiate
-            state = hass.states.get(full_entity_id)
-            if state:
-                new_attrs = dict(state.attributes)
-                new_attrs['icon'] = icon
-                new_attrs['theme_color'] = color
-                hass.states.async_set(full_entity_id, state.state, new_attrs)
-
-            update_sensor()
-            
-        except Exception as e:
-            _LOGGER.error("scene_manager: Unexpected error in handle_save_scene: %s", e)
-
-    async def handle_delete_scene(call: ServiceCall):
-        entity_id = call.data.get("entity_id")
-        try:
-            hass.states.async_remove(entity_id)
-        except Exception:
-            pass
-
-        if entity_id in data["meta"]:
-            del data["meta"][entity_id]
-
-        for _, scenes in data["order"].items():
-            if entity_id in scenes:
-                scenes.remove(entity_id)
-        
-        await store.async_save(data)
-        update_sensor()
-
-    async def handle_reorder(call: ServiceCall):
-        room = call.data.get("room")
-        new_order = call.data.get("order", [])
-        data["order"][room] = new_order
-        await store.async_save(data)
-        update_sensor()
-    
-    async def handle_set_state(call: ServiceCall):
-        eid = call.data.get("entity_id")
-        st = call.data.get("state")
-        attrs = call.data.get("attributes")
-        icn = call.data.get("icon")
-        clr = call.data.get("color")
-        
-        if eid:
-            ns = hass.states.get(eid)
-            c_st = ns.state if ns else (st or "unknown")
-            c_at = dict(ns.attributes) if ns else {}
-            
-            if st: c_st = st
-            if attrs: c_at.update(attrs)
-            if icn: c_at['icon'] = icn
-            if clr: c_at['theme_color'] = clr
-            
-            hass.states.async_set(eid, c_st, c_at)
-
-    hass.services.async_register(DOMAIN, "save_scene", handle_save_scene)
-    hass.services.async_register(DOMAIN, "delete_scene", handle_delete_scene)
-    hass.services.async_register(DOMAIN, "reorder_scenes", handle_reorder)
-    hass.services.async_register("python_script", "set_state", handle_set_state)
-    hass.services.async_register("python_script", "delete_entity", handle_delete_scene)
-
-    # --- CORRECTION MAJEURE ICI ---
-    # On utilise la nouvelle méthode async_register_static_paths
-    try:
-        await hass.http.async_register_static_paths([
-            StaticPathConfig(
-                "/scene_manager/card.js",
-                hass.config.path("custom_components/scene_manager/www/scene-manager-card.js"),
-                True
-            )
-        ])
-    except RuntimeError as err:
-        # Route already registered (e.g. registered in async_setup). Ignore.
-        _LOGGER.debug("scene_manager: static path already registered: %s", err)
-    except Exception as err:
-        _LOGGER.debug("scene_manager: could not register static path: %s", err)
-
-    # Copier le fichier JS dans le répertoire `www/` de Home Assistant si possible
-    try:
-        www_dir = hass.config.path("www")
-        if www_dir and os.path.isdir(www_dir):
-            src = hass.config.path("custom_components/scene_manager/www/scene-manager-card.js")
-            dst = os.path.join(www_dir, "scene-manager-card.js")
-            try:
-                # Écrire seulement si le fichier n'existe pas ou diffère
-                if (not os.path.exists(dst)) or (os.path.getmtime(src) > os.path.getmtime(dst)):
-                    shutil.copyfile(src, dst)
-                    _LOGGER.info("scene_manager: copied scene-manager-card.js to %s", dst)
-                    # mark that we copied the file so we can remove it on uninstall
-                    data["copied_to_www"] = True
-                    await store.async_save(data)
-            except Exception as ex:
-                _LOGGER.debug("scene_manager: could not copy JS to www: %s", ex)
-    except Exception:
-        pass
-
-    # Inform the user (persistent notification) to add the resource in Lovelace
-    try:
-        # On utilise une nouvelle clé 'resource_notified_v2' pour forcer l'affichage
-        # au moins une fois après cette mise à jour, même si une ancienne installation existait.
-        already_notified = data.get("resource_notified_v2", False)
-        user_wants_notification = entry.data.get("notify_add_resource", True)
-        
-        _LOGGER.debug("scene_manager: already_notified=%s, user_wants=%s", already_notified, user_wants_notification)
-
-        if user_wants_notification and not already_notified:
-            message = (
-                "La carte `scene-manager-card.js` a été copiée dans `/local/` sur votre instance Home Assistant.\n\n"
-                "Pour l'ajouter à Lovelace :\n"
-                "1. UI → Configuration → Tableaux de bord → Ressources\n"
-                "2. Cliquez sur 'Ajouter une ressource' → URL : `/local/scene-manager-card.js` → Type : Module JavaScript\n\n"
-                "Vous pouvez forcer le rafraîchissement en ajoutant `?v=...` à l'URL si nécessaire."
-            )
-            _LOGGER.debug("scene_manager: creating persistent notification to ask user to add resource")
             await hass.services.async_call(
-                "persistent_notification",
+                SCENE_DOMAIN,
                 "create",
-                {
-                    "title": "Scene Manager — Ajouter la ressource Lovelace",
-                    "message": message,
-                    "notification_id": "scene_manager_add_resource",
-                },
+                {"scene_id": scene_id, "entities": deepcopy(snapshot)},
                 blocking=True,
             )
-            data["resource_notified_v2"] = True
-            await store.async_save(data)
-            _LOGGER.debug("scene_manager: persistent notification created and storage updated")
-    except Exception as ex:
-        _LOGGER.debug("scene_manager: could not create persistent notification: %s", ex)
 
-    return True
+            state = hass.states.get(scene_entity_id)
+            if state is not None:
+                attrs = dict(state.attributes)
+                if scene_data.get("icon"):
+                    attrs["icon"] = scene_data["icon"]
+                if scene_data.get("color"):
+                    attrs["theme_color"] = scene_data["color"]
+                if scene_data.get("room"):
+                    attrs["room"] = scene_data["room"]
+                hass.states.async_set(scene_entity_id, state.state, attrs)
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
-    # remove services
-    hass.services.async_remove(DOMAIN, "save_scene")
-    hass.services.async_remove(DOMAIN, "delete_scene")
-    hass.services.async_remove(DOMAIN, "reorder_scenes")
+            restored_count += 1
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Failed to restore scene %s: %s", scene_entity_id, err)
 
-    # remove the registry sensor
+    return restored_count
+
+
+async def _async_get_lovelace_resources(hass: HomeAssistant) -> Any | None:
+    lovelace_data = hass.data.get(LOVELACE_DATA)
+    if lovelace_data is None:
+        return None
+
+    if isinstance(lovelace_data, dict):
+        resource_mode = lovelace_data.get("resource_mode", MODE_STORAGE)
+        resources = lovelace_data.get("resources")
+    else:
+        resource_mode = getattr(lovelace_data, "resource_mode", MODE_STORAGE)
+        resources = getattr(lovelace_data, "resources", None)
+
+    if resource_mode != MODE_STORAGE:
+        return None
+    if resources is None:
+        return None
+
+    if hasattr(resources, "async_get_info"):
+        await resources.async_get_info()
+
+    return resources
+
+
+def _resource_url_path(url: Any) -> str:
+    if not isinstance(url, str):
+        return ""
+    return url.split("?", 1)[0]
+
+
+async def _async_ensure_lovelace_resource(hass: HomeAssistant) -> tuple[bool, str]:
+    resources = await _async_get_lovelace_resources(hass)
+    if resources is None or not hasattr(resources, "async_items"):
+        return False, "lovelace_resource_storage_unavailable"
+
+    items = list(resources.async_items() or [])
+    existing = next(
+        (
+            item
+            for item in items
+            if _resource_url_path(item.get(CONF_URL)) == CARD_URL
+        ),
+        None,
+    )
+    payload = {CONF_URL: CARD_RESOURCE_URL, CONF_RESOURCE_TYPE_WS: "module"}
+
+    if existing is None:
+        if not hasattr(resources, "async_create_item"):
+            return False, "lovelace_resource_create_unavailable"
+        await resources.async_create_item(payload)
+        return True, "created"
+
+    if existing.get(CONF_URL) != CARD_RESOURCE_URL or existing.get("type") != "module":
+        item_id = existing.get("id")
+        if item_id is None or not hasattr(resources, "async_update_item"):
+            return False, "lovelace_resource_update_unavailable"
+        await resources.async_update_item(item_id, payload)
+        return True, "updated"
+
+    return True, "already_registered"
+
+
+async def _async_remove_lovelace_resource(hass: HomeAssistant) -> bool:
+    resources = await _async_get_lovelace_resources(hass)
+    if resources is None or not hasattr(resources, "async_items"):
+        return False
+
+    removed = False
+    for item in list(resources.async_items() or []):
+        if _resource_url_path(item.get(CONF_URL)) != CARD_URL:
+            continue
+        item_id = item.get("id")
+        if item_id is None or not hasattr(resources, "async_delete_item"):
+            continue
+        await resources.async_delete_item(item_id)
+        removed = True
+    return removed
+
+
+async def _async_create_resource_notification(
+    hass: HomeAssistant,
+    store: Store,
+    data: dict[str, Any],
+    reason: str,
+) -> None:
+    if data.get("resource_notified_v3"):
+        return
+
+    message = (
+        "La carte Scene Manager Ultimate est servie par l'intégration mais la "
+        "ressource Lovelace n'a pas pu être ajoutée automatiquement.\n\n"
+        f"Ajoutez cette ressource si la carte n'apparaît pas :\n"
+        f"- URL : `{CARD_RESOURCE_URL}`\n"
+        "- Type : `module`\n\n"
+        f"Raison technique : `{reason}`."
+    )
+
     try:
-        if hass.states.get("sensor.scene_manager_registry"):
-            hass.states.async_remove("sensor.scene_manager_registry")
-    except Exception:
-        pass
+        await hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "title": "Scene Manager Ultimate - Ressource Lovelace",
+                "message": message,
+                "notification_id": "scene_manager_add_resource",
+            },
+            blocking=True,
+        )
+        data["resource_notified_v3"] = True
+        await store.async_save(data)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Could not create Lovelace resource notification: %s", err)
 
+
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    """Set up the integration from YAML."""
+    await _async_register_static_path(hass)
     return True
 
-async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Called when the entry is removed (deleted) from Home Assistant."""
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Scene Manager Ultimate from a config entry."""
+    _LOGGER.info("Setting up Scene Manager Ultimate v%s", VERSION)
+
+    await _async_register_static_path(hass)
+
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
-    try:
-        data = await store.async_load() or {}
-    except Exception:
-        data = {}
+    data = await _async_load_data(store)
 
-    # remove copied www file if we created it
-    try:
-        if data.get("copied_to_www"):
-            www_file = hass.config.path("www/scene-manager-card.js")
-            if os.path.exists(www_file):
-                try:
-                    os.remove(www_file)
-                    _LOGGER.info("scene_manager: removed copied www file %s", www_file)
-                except Exception as ex:
-                    _LOGGER.debug("scene_manager: could not remove www file: %s", ex)
-    except Exception:
-        pass
+    restored_count = await _async_restore_scenes(hass, data)
+    _LOGGER.info("Scene Manager restored %d scene(s)", restored_count)
+    _publish_registry(hass, data)
 
-    # dismiss persistent notifications we may have created
-    for nid in ("scene_manager_add_resource", "scene_manager_add_resource_configflow", "scene_manager_add_resource_options"):
+    async def handle_save_scene(call: ServiceCall) -> None:
+        scene_id = _slugify(call.data.get("scene_id"))
+        full_entity_id = f"scene.{scene_id}"
+        replace_entity_id = call.data.get(CONF_REPLACE_ENTITY_ID)
+        entities = _normalise_entities(call.data.get("entities"))
+        icon = call.data.get("icon") or "mdi:palette"
+        color = _normalise_color(call.data.get("color", "#9E9E9E"))
+        room = _slugify(call.data.get("room"), "unknown")
+
+        snapshot: dict[str, Any] = {}
+        for entity_id in entities:
+            state_obj = hass.states.get(entity_id)
+            if state_obj is None:
+                _LOGGER.debug("Skipping unknown snapshot entity: %s", entity_id)
+                continue
+            entity_data = dict(state_obj.attributes)
+            entity_data["state"] = state_obj.state
+            snapshot[entity_id] = entity_data
+
+        if not snapshot:
+            raise ServiceValidationError("No valid entity state could be captured")
+
+        await hass.services.async_call(
+            SCENE_DOMAIN,
+            "create",
+            {"scene_id": scene_id, "snapshot_entities": entities},
+            blocking=True,
+        )
+
+        if (
+            isinstance(replace_entity_id, str)
+            and replace_entity_id.startswith("scene.")
+            and replace_entity_id != full_entity_id
+        ):
+            hass.states.async_remove(replace_entity_id)
+            data["meta"].pop(replace_entity_id, None)
+            _remove_from_order(data, replace_entity_id)
+
+        _remove_from_order(data, full_entity_id)
+        data["order"].setdefault(room, [])
+        if full_entity_id not in data["order"][room]:
+            data["order"][room].append(full_entity_id)
+
+        data["meta"][full_entity_id] = {
+            "icon": icon,
+            "color": color,
+            "room": room,
+            "snapshot": snapshot,
+        }
+
+        state = hass.states.get(full_entity_id)
+        if state is not None:
+            attrs = dict(state.attributes)
+            attrs["icon"] = icon
+            attrs["theme_color"] = color
+            attrs["room"] = room
+            hass.states.async_set(full_entity_id, state.state, attrs)
+
+        await _async_save_data(hass, store, data)
+
+    async def handle_delete_scene(call: ServiceCall) -> None:
+        entity_id = _scene_entity_id_from_call(call)
+        hass.states.async_remove(entity_id)
+        data["meta"].pop(entity_id, None)
+        _remove_from_order(data, entity_id)
+        await _async_save_data(hass, store, data)
+
+    async def handle_reorder_scenes(call: ServiceCall) -> None:
+        room = _slugify(call.data.get("room"), "unknown")
+        order = call.data.get("order", [])
+        if not isinstance(order, list):
+            raise ServiceValidationError("order must be a list of scene entity IDs")
+
+        data["order"][room] = [
+            entity_id
+            for entity_id in order
+            if isinstance(entity_id, str) and entity_id.startswith("scene.")
+        ]
+        await _async_save_data(hass, store, data)
+
+    hass.services.async_register(DOMAIN, _SERVICE_SAVE_SCENE, handle_save_scene)
+    hass.services.async_register(DOMAIN, _SERVICE_DELETE_SCENE, handle_delete_scene)
+    hass.services.async_register(DOMAIN, _SERVICE_REORDER_SCENES, handle_reorder_scenes)
+
+    if _entry_option(entry, CONF_AUTO_REGISTER_RESOURCE):
+        registered, reason = await _async_ensure_lovelace_resource(hass)
+        if registered:
+            data["resource_registered"] = True
+            data["resource_url"] = CARD_RESOURCE_URL
+            await store.async_save(data)
+            _LOGGER.info("Scene Manager Lovelace resource %s", reason)
+        elif _entry_option(entry, CONF_NOTIFY_RESOURCE_FALLBACK):
+            await _async_create_resource_notification(hass, store, data, reason)
+
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    hass.services.async_remove(DOMAIN, _SERVICE_SAVE_SCENE)
+    hass.services.async_remove(DOMAIN, _SERVICE_DELETE_SCENE)
+    hass.services.async_remove(DOMAIN, _SERVICE_REORDER_SCENES)
+
+    if hass.states.get(REGISTRY_ENTITY_ID) is not None:
+        hass.states.async_remove(REGISTRY_ENTITY_ID)
+
+    return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Clean up when the integration is removed."""
+    store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+    data = await _async_load_data(store)
+
+    if data.get("resource_registered"):
+        await _async_remove_lovelace_resource(hass)
+
+    # Remove the legacy file copied by older releases.
+    if data.get("copied_to_www"):
+        legacy_www_file = Path(hass.config.path("www")) / CARD_FILENAME
+        if legacy_www_file.exists():
+            try:
+                await hass.async_add_executor_job(legacy_www_file.unlink)
+            except OSError as err:
+                _LOGGER.debug("Could not remove legacy www card file: %s", err)
+
+    for notification_id in (
+        "scene_manager_add_resource",
+        "scene_manager_add_resource_configflow",
+        "scene_manager_add_resource_options",
+    ):
         try:
-            hass.services.async_call("persistent_notification", "dismiss", {"notification_id": nid})
-        except Exception:
+            await hass.services.async_call(
+                "persistent_notification",
+                "dismiss",
+                {"notification_id": notification_id},
+                blocking=True,
+            )
+        except Exception:  # noqa: BLE001
             pass
 
-    # remove stored data file to ensure a clean reinstall
-    try:
-        await store.async_remove()
-        _LOGGER.info("scene_manager: removed stored data on remove_entry")
-    except Exception:
-        pass
+    if hass.states.get(REGISTRY_ENTITY_ID) is not None:
+        hass.states.async_remove(REGISTRY_ENTITY_ID)
+
+    await store.async_remove()

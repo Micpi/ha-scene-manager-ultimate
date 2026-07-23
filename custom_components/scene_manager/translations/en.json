@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Scene Manager Ultimate",
+        "description": "Configure bundled Lovelace card registration.",
+        "data": {
+          "auto_register_resource": "Automatically register the Lovelace card resource",
+          "notify_resource_fallback": "Notify me if automatic registration is not possible"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Scene Manager Ultimate is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Scene Manager Ultimate options",
+        "data": {
+          "auto_register_resource": "Automatically register the Lovelace card resource",
+          "notify_resource_fallback": "Notify me if automatic registration is not possible"
+        }
+      }
+    }
+  }
+}

@@ -1,11 +1,12 @@
 // -------------------------------------------------------------------
 // SCENE MANAGER ULTIMATE
-// Version: 1.0.13
+// Version: 1.0.16
 // Description: Carte de gestion de scènes avec Drag&Drop et Sync Serveur
 // -------------------------------------------------------------------
 
 // Version constant used below
-const VERSION = '1.0.13';
+const VERSION = '1.0.16';
+const REGISTRY_ENTITY_ID = "sensor.scene_manager_registry";
 
 // ... Le reste du code de la classe SceneManagerCard ...
 
@@ -124,6 +125,7 @@ class SceneManagerCard extends HTMLElement {
         this.cachedMeta = {};
         this.shouldUpdate = true;
         this._lastStorageUpdate = null;
+        this._lastStorageRoom = null;
 
         this.shadowRoot.innerHTML = `
         <style>
@@ -439,6 +441,7 @@ class SceneManagerCard extends HTMLElement {
             if (this._useManualLights()) {
                 this._applyManualZonesConfig();
                 if (this.roomSelector && this.areas.length > 0) this._populateRoomSelector();
+                this._checkServerUpdates();
                 this.shouldUpdate = true;
                 this._updateContent();
                 return;
@@ -462,12 +465,13 @@ class SceneManagerCard extends HTMLElement {
                     titleSpan.innerText = area ? area.name : this.fixedRoom.toUpperCase();
                 }
             }
+            this._checkServerUpdates();
             this.shouldUpdate = true;
             this._updateContent();
         } catch (e) { console.error("Erreur", e); }
     }
 
-    _getStorageEntityId() { return `sensor.scene_manager_data_${this.currentRoom.replace(/[^a-z0-9_]/g, '_')}`; }
+    _getStorageEntityId() { return REGISTRY_ENTITY_ID; }
 
     _useManualLights() {
         return !!(this.config && this.config.manual_lights);
@@ -558,27 +562,40 @@ class SceneManagerCard extends HTMLElement {
         if (!this.currentRoom) return;
         const entityId = this._getStorageEntityId();
         const stateObj = this._hass.states[entityId];
-        if (stateObj && stateObj.last_updated !== this._lastStorageUpdate) {
+        if (!stateObj) {
+            this.cachedOrder = [];
+            this.cachedMeta = {};
+            return;
+        }
+        if (
+            stateObj.last_updated !== this._lastStorageUpdate ||
+            this._lastStorageRoom !== this.currentRoom
+        ) {
             this._lastStorageUpdate = stateObj.last_updated;
+            this._lastStorageRoom = this.currentRoom;
             if (stateObj.attributes) {
-                this.cachedOrder = stateObj.attributes.order || [];
+                const allOrders = stateObj.attributes.order || {};
+                if (Array.isArray(allOrders)) {
+                    this.cachedOrder = allOrders;
+                } else {
+                    this.cachedOrder = allOrders[this.currentRoom] || [];
+                }
                 this.cachedMeta = stateObj.attributes.meta || {};
                 this.shouldUpdate = true;
             }
         }
     }
 
-    _pushToServer() {
-        const entityId = this._getStorageEntityId();
-        this._hass.callService("python_script", "set_state", {
-            entity_id: entityId, state: Date.now().toString(), attributes: { order: this.cachedOrder, meta: this.cachedMeta }
-        });
-        this._lastStorageUpdate = "Just Updated";
-    }
     _updateStorageEntity() { this._checkServerUpdates(); }
-    _saveOrder(orderedIds) { this.cachedOrder = orderedIds; this._pushToServer(); }
+    _saveOrder(orderedIds) {
+        this.cachedOrder = orderedIds.filter(Boolean);
+        this._hass.callService("scene_manager", "reorder_scenes", {
+            room: this.currentRoom,
+            order: this.cachedOrder
+        }).catch(err => console.error("scene-manager: reorder_scenes failed", err));
+    }
     _loadOrder() { return this.cachedOrder; }
-    _saveMeta(meta) { this.cachedMeta = meta; this._pushToServer(); }
+    _saveMeta(meta) { this.cachedMeta = meta; this.shouldUpdate = true; }
     _loadMeta() { return this.cachedMeta; }
     _getSceneEntities(sceneId) { const sceneObj = this._hass.states[sceneId]; return sceneObj && sceneObj.attributes.entity_id ? sceneObj.attributes.entity_id : []; }
 
@@ -744,7 +761,7 @@ class SceneManagerCard extends HTMLElement {
         });
     }
 
-    _saveScene() {
+    async _saveScene() {
         const name = this.inputName.value; if (!name) return alert("Nom vide !");
         const room = this.currentRoom.toLowerCase(); if (!room) return alert("Aucune pièce");
         const color = this.inputColor.value; const iconToSave = this.currentIcon;
@@ -759,28 +776,38 @@ class SceneManagerCard extends HTMLElement {
         if (selectedLights.length === 0) return alert(`Sélectionnez au moins une lumière !`);
 
         const meta = this._loadMeta();
-        const snapshot = {}; selectedLights.forEach(eid => { snapshot[eid] = "included"; });
-        meta[newEntityId] = { icon: iconToSave, color: color, snapshot: snapshot };
-        this._saveMeta(meta);
+        const replaceEntityId = this.editingId && this.editingId !== newEntityId ? this.editingId : null;
 
-        if (this.editingId && this.editingId !== newEntityId) {
-            if (confirm("Renommer la scène ?")) {
-                this._hass.callService("python_script", "delete_entity", { entity_id: this.editingId });
-                delete meta[this.editingId]; this._saveMeta(meta);
-                let order = this._loadOrder(); const idx = order.indexOf(this.editingId);
-                if (idx !== -1) { order[idx] = newEntityId; this._saveOrder(order); }
-            } else return;
-        } else {
-            if (!this.editingId) { const currentOrder = this._loadOrder(); if (!currentOrder.includes(newEntityId)) { currentOrder.push(newEntityId); this._saveOrder(currentOrder); } }
+        if (replaceEntityId && !confirm("Renommer la scène ?")) {
+            return;
         }
 
-        this._hass.callService("scene_manager", "save_scene", {
-            scene_id: shortId,
-            entities: selectedLights,
-            icon: iconToSave,
-            color: color,
-            room: room
-        });
+        try {
+            await this._hass.callService("scene_manager", "save_scene", {
+                scene_id: shortId,
+                entities: selectedLights,
+                icon: iconToSave,
+                color: color,
+                room: room,
+                replace_entity_id: replaceEntityId
+            });
+        } catch (err) {
+            console.error("scene-manager: save_scene failed", err);
+            alert("Impossible de sauvegarder la scène. Consultez les journaux Home Assistant.");
+            return;
+        }
+
+        if (replaceEntityId) delete meta[replaceEntityId];
+        meta[newEntityId] = { icon: iconToSave, color: color, room: room };
+        this._saveMeta(meta);
+
+        let order = this._loadOrder().filter(id => id !== replaceEntityId);
+        if (this.editingId && this.editingId === newEntityId) {
+            if (!order.includes(newEntityId)) order.push(newEntityId);
+        } else if (!order.includes(newEntityId)) {
+            order.push(newEntityId);
+        }
+        this._saveOrder(order);
 
         this.inputName.value = ""; this._toggleMenu(false); this._updateContent();
     }
@@ -827,11 +854,17 @@ class SceneManagerCard extends HTMLElement {
                     btn.classList.add("activated"); setTimeout(() => btn.classList.remove("activated"), 1500);
                 });
             }
-            btn.querySelector(".delete-badge").addEventListener("click", (e) => {
+            btn.querySelector(".delete-badge").addEventListener("click", async (e) => {
                 e.stopPropagation(); if (confirm(`Supprimer "${name}" ?`)) {
-                    this._hass.callService("scene_manager", "delete_scene", { entity_id: entityId });
+                    try {
+                        await this._hass.callService("scene_manager", "delete_scene", { entity_id: entityId });
+                    } catch (err) {
+                        console.error("scene-manager: delete_scene failed", err);
+                        alert("Impossible de supprimer la scène. Consultez les journaux Home Assistant.");
+                        return;
+                    }
                     const m = this._loadMeta(); delete m[entityId]; this._saveMeta(m);
-                    this.cachedOrder = this.cachedOrder.filter(id => id !== entityId); this._pushToServer();
+                    this.cachedOrder = this.cachedOrder.filter(id => id !== entityId);
                     btn.style.opacity = "0"; btn.style.width = "0px"; setTimeout(() => btn.remove(), 300);
                     if (this.editingId === entityId) this._stopEditing();
                 }

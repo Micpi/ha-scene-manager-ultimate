@@ -1,33 +1,70 @@
 save_scene:
-  name: Sauvegarder une scène
-  description: "Crée ou met à jour une scène et sauvegarde ses métadonnées."
+  name: Sauvegarder une scene
+  description: Cree ou met a jour une scene et sauvegarde ses metadonnees.
   fields:
     scene_id:
-      description: "ID de la scène (ex: salon_film)"
+      name: ID de scene
+      description: Identifiant de la scene, par exemple salon_film.
       required: true
       selector:
         text: {}
     entities:
-      description: "Liste des entités à inclure"
+      name: Entites
+      description: Entites a capturer dans la scene.
       required: true
       selector:
-        object: {}
+        entity:
+          multiple: true
     icon:
-      description: "Icône de la scène"
+      name: Icone
+      description: Icone MDI affichee par la carte.
+      default: mdi:palette
       selector:
         icon: {}
     color:
-      description: "Couleur du bouton"
+      name: Couleur
+      description: Couleur hexadecimale du bouton, par exemple "#03A9F4".
+      default: "#9E9E9E"
       selector:
-        color_rgb: {}
+        text: {}
+    room:
+      name: Piece
+      description: Piece ou zone utilisee pour filtrer et ordonner les scenes.
+      default: unknown
+      selector:
+        text: {}
+    replace_entity_id:
+      name: Scene remplacee
+      description: Ancienne scene a supprimer lors d'un renommage.
+      selector:
+        entity:
+          domain: scene
 
 delete_scene:
-  name: Supprimer une scène
-  description: "Supprime la scène et ses métadonnées."
+  name: Supprimer une scene
+  description: Supprime une scene et ses metadonnees.
   fields:
-    scene_id:
-      description: "ID de la scène à supprimer"
+    entity_id:
+      name: Scene
+      description: Entite scene a supprimer.
       required: true
       selector:
         entity:
           domain: scene
+
+reorder_scenes:
+  name: Reordonner les scenes
+  description: Met a jour l'ordre d'affichage des scenes pour une piece.
+  fields:
+    room:
+      name: Piece
+      description: Piece ou zone concernee.
+      required: true
+      selector:
+        text: {}
+    order:
+      name: Ordre
+      description: Liste ordonnee des entites scene.
+      required: true
+      selector:
+        object: {}

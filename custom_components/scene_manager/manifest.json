@@ -1,11 +1,20 @@
 {
-    "domain": "scene_manager",
-    "name": "Scene Manager Ultimate",
-    "codeowners": [
-        "@Micpi"
-    ],
-    "config_flow": true,
-    "documentation": "https://github.com/Micpi/ha-scene-manager-ultimate",
-    "iot_class": "local_push",
-    "version": "1.0.13"
+  "domain": "scene_manager",
+  "name": "Scene Manager Ultimate",
+  "codeowners": [
+    "@Micpi"
+  ],
+  "config_flow": true,
+  "after_dependencies": [
+    "lovelace"
+  ],
+  "dependencies": [
+    "http"
+  ],
+  "documentation": "https://github.com/Micpi/ha-scene-manager-ultimate",
+  "integration_type": "helper",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/Micpi/ha-scene-manager-ultimate/issues",
+  "single_config_entry": true,
+  "version": "1.0.16"
 }
